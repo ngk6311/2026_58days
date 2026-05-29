@@ -1,0 +1,13 @@
+{
+  "name": "fortune-game-sheet-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "auth": "node src/bootstrap-auth.mjs",
+    "sync": "node src/sync.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.54.2"
+  }
+}

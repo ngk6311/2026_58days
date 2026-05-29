@@ -1,0 +1,50 @@
+name: Sync Fortune Game
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "5 0 * * *"
+    - cron: "5 15 * * *"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Write runtime secrets
+        shell: bash
+        run: |
+          mkdir -p .auth
+          cat > .env <<'EOF'
+          FORTUNE_PARTNERS_URL=${{ secrets.FORTUNE_PARTNERS_URL }}
+          FORTUNE_SHEET_ID=${{ secrets.FORTUNE_SHEET_ID }}
+          FORTUNE_SCHOOL_ID=${{ secrets.FORTUNE_SCHOOL_ID }}
+          FORTUNE_API_BASE_URL=${{ secrets.FORTUNE_API_BASE_URL }}
+          FORTUNE_TIMEZONE=${{ secrets.FORTUNE_TIMEZONE }}
+          FORTUNE_SCORE_RESET_HOUR=${{ secrets.FORTUNE_SCORE_RESET_HOUR }}
+          FORTUNE_WEEK_START=${{ secrets.FORTUNE_WEEK_START }}
+          FORTUNE_LOG_LIMIT=${{ secrets.FORTUNE_LOG_LIMIT }}
+          FORTUNE_LOOKBACK_DAYS=${{ secrets.FORTUNE_LOOKBACK_DAYS }}
+          GOOGLE_CREDENTIALS_PATH=./credentials.json
+          EOF
+          printf '%s' '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+          printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' > .auth/storage-state.json
+
+      - name: Run sync
+        run: npm run sync

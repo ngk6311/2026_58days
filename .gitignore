@@ -1,0 +1,6 @@
+.env
+.auth/
+credentials.json
+node_modules/
+output/
+__pycache__/
