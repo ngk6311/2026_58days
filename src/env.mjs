@@ -90,6 +90,7 @@ export function loadConfig() {
     sheetId: requireEnv("FORTUNE_SHEET_ID"),
     schoolId: getEnv("FORTUNE_SCHOOL_ID", ""),
     apiBaseUrl: getEnv("FORTUNE_API_BASE_URL", "https://sincheng-api.playworld.com.tw"),
+    webAppUrl: getEnv("FORTUNE_WEB_APP_URL", ""),
     timezone: getEnv("FORTUNE_TIMEZONE", "Asia/Taipei"),
     scoreResetHour: Number(getEnv("FORTUNE_SCORE_RESET_HOUR", "0")),
     weekStart: Number(getEnv("FORTUNE_WEEK_START", "1")),

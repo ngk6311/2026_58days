@@ -41,6 +41,7 @@ python run.py sync
 - `FORTUNE_SHEET_ID`: Google Sheet ID
 - `FORTUNE_SCHOOL_ID`: 可選。若網站頁面抓不到 school id，可直接填這個值
 - `FORTUNE_API_BASE_URL`: API 主機，預設 `https://sincheng-api.playworld.com.tw`
+- `FORTUNE_WEB_APP_URL`: 可選。填入 Apps Script Web App `/exec` 網址後，`weekly_dashboard` 會自動保留手機同步連結
 - `FORTUNE_TIMEZONE`: 預設 `Asia/Taipei`
 - `FORTUNE_SCORE_RESET_HOUR`: 日結算小時，預設 `0`
 - `FORTUNE_WEEK_START`: 週起始日，`1` 代表週一

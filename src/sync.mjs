@@ -577,7 +577,14 @@ function buildWeeklyDashboard(members, rawLogs, config, scoreResetHour) {
   ];
 
   const metaRows = [
-    ["統計週期", `${campaign.currentWeekLabel} ${monday} ~ ${sunday}`],
+    [
+      "統計週期",
+      `${campaign.currentWeekLabel} ${monday} ~ ${sunday}`,
+      "手機同步",
+      config.webAppUrl
+        ? `=HYPERLINK("${config.webAppUrl}","手機點我同步")`
+        : "",
+    ],
     ["主題親證週期", `${campaign.themeCycleLabel} ${campaign.themeCycleStart} ~ ${campaign.themeCycleEnd}`],
     ["說明", "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，該輪完成 1 次即打勾。"],
     [],
