@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { chromium } from "playwright";
 import { loadConfig } from "./env.mjs";
 import { GoogleSheetsClient } from "./google-sheets.mjs";
 import {
@@ -144,6 +143,20 @@ function requireStorageState() {
   return filePath;
 }
 
+function readAccessTokenFromStorageState(storageStatePath) {
+  const raw = JSON.parse(fs.readFileSync(storageStatePath, "utf8"));
+  for (const origin of raw.origins ?? []) {
+    for (const item of origin.localStorage ?? []) {
+      if (item.name === "accessToken" && item.value) {
+        return item.value;
+      }
+    }
+  }
+  throw new Error(
+    "Missing accessToken in storage-state.json. Please run `python run.py auth` again and ensure you are logged in.",
+  );
+}
+
 function boolCell(value) {
   return value ? "TRUE" : "FALSE";
 }
@@ -191,108 +204,80 @@ function extractSchoolIdFromHtml(html) {
   return null;
 }
 
-async function resolveSchoolId(page, partnersUrl) {
+async function resolveSchoolId(partnersUrl, authToken, apiBaseUrl) {
   const schoolSlug = parseSchoolSlugFromPartnersUrl(partnersUrl);
-  const candidateUrls = [
-    partnersUrl,
-    schoolSlug ? `https://www.bigsmileunity.com/${schoolSlug}/fortune-game` : null,
-    schoolSlug ? `https://www.bigsmileunity.com/${schoolSlug}` : null,
-  ].filter(Boolean);
-
-  const attempts = [];
-
-  for (const candidateUrl of candidateUrls) {
-    const response = await page.goto(candidateUrl, { waitUntil: "domcontentloaded" });
-    if (!response || !response.ok()) {
-      attempts.push(`${candidateUrl} -> ${response ? response.status() : "no response"}`);
-      continue;
-    }
-
-    const html = await page.content();
-    const schoolId = extractSchoolIdFromHtml(html);
-    if (schoolId) {
-      return schoolId;
-    }
-
-    attempts.push(`${candidateUrl} -> no school id in html`);
+  if (!schoolSlug) {
+    throw new Error("Could not resolve school slug from partners URL.");
   }
 
-  throw new Error(`Could not resolve school id. Attempts: ${attempts.join("; ")}`);
+  const url = `${apiBaseUrl}/api/v1/public/schoolsInfo/${schoolSlug}`;
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      Authorization: `Bearer ${authToken}`,
+    },
+  });
+
+  if (!response.ok()) {
+    throw new Error(`Failed to resolve school id: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  const schoolId = data?.schoolInfo?.id ?? data?.id ?? data?.school?.id ?? null;
+  if (!schoolId) {
+    throw new Error("Could not resolve school id from public schoolsInfo API.");
+  }
+  return schoolId;
 }
 
-async function getJson(page, url, authToken) {
-  const result = await page.evaluate(async ({ targetUrl, token }) => {
-    const response = await fetch(targetUrl, {
-      method: "GET",
-      credentials: "include",
-      headers: {
-        Accept: "application/json, text/plain, */*",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
+async function getJson(url, authToken) {
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
+  });
 
-    const text = await response.text();
-    return {
-      ok: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-      contentType: response.headers.get("content-type") || "",
-      text,
-    };
-  }, { targetUrl: url, token: authToken });
-
-  if (!result.ok) {
-    throw new Error(`Request failed: ${result.status} ${result.statusText} (${url})`);
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status} ${response.statusText} (${url})`);
   }
 
   try {
-    return JSON.parse(result.text);
+    return JSON.parse(text);
   } catch {
-    const snippet = result.text.slice(0, 200).replace(/\s+/g, " ");
-    throw new Error(
-      `Expected JSON but got ${result.contentType || "unknown content type"} from ${url}. Snippet: ${snippet}`,
-    );
+    const snippet = text.slice(0, 200).replace(/\s+/g, " ");
+    const contentType = response.headers.get("content-type") || "unknown content type";
+    throw new Error(`Expected JSON but got ${contentType} from ${url}. Snippet: ${snippet}`);
   }
 }
 
-async function getJsonOptional(page, url, authToken, allowedStatuses = [401, 403, 404]) {
-  const result = await page.evaluate(async ({ targetUrl, token, allowed }) => {
-    const response = await fetch(targetUrl, {
-      method: "GET",
-      credentials: "include",
-      headers: {
-        Accept: "application/json, text/plain, */*",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
+async function getJsonOptional(url, authToken, allowedStatuses = [401, 403, 404]) {
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
+  });
 
-    const text = await response.text();
-    return {
-      ok: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-      contentType: response.headers.get("content-type") || "",
-      text,
-      allowed,
-    };
-  }, { targetUrl: url, token: authToken, allowed: allowedStatuses });
-
-  if (result.ok) {
+  const text = await response.text();
+  if (response.ok) {
     try {
-      return JSON.parse(result.text);
+      return JSON.parse(text);
     } catch {
-      const snippet = result.text.slice(0, 200).replace(/\s+/g, " ");
-      throw new Error(
-        `Expected JSON but got ${result.contentType || "unknown content type"} from ${url}. Snippet: ${snippet}`,
-      );
+      const snippet = text.slice(0, 200).replace(/\s+/g, " ");
+      const contentType = response.headers.get("content-type") || "unknown content type";
+      throw new Error(`Expected JSON but got ${contentType} from ${url}. Snippet: ${snippet}`);
     }
   }
 
-  if (allowedStatuses.includes(result.status)) {
+  if (allowedStatuses.includes(response.status)) {
     return null;
   }
 
-  throw new Error(`Request failed: ${result.status} ${result.statusText} (${url})`);
+  throw new Error(`Request failed: ${response.status} ${response.statusText} (${url})`);
 }
 
 function normalizeMember(team, member) {
@@ -328,13 +313,13 @@ function buildLogRow(log, member, fetchedAt, logicalDate) {
   };
 }
 
-async function collectMembersAndLogs(page, config, schoolId, authToken) {
+async function collectMembersAndLogs(config, schoolId, authToken) {
   const apiBase = `${config.apiBaseUrl}/api/v1/schools/${schoolId}/fortune_game`;
   const [teamData, publicConfig] = await Promise.all([
-    getJson(page, `${apiBase}/my-team/members`, authToken),
-    getJson(page, `${apiBase}/config/public`, authToken),
+    getJson(`${apiBase}/my-team/members`, authToken),
+    getJson(`${apiBase}/config/public`, authToken),
   ]);
-  const brigadeData = await getJsonOptional(page, `${apiBase}/my-brigade`, authToken);
+  const brigadeData = await getJsonOptional(`${apiBase}/my-brigade`, authToken);
 
   const scoreResetHour = Number(publicConfig?.score_reset_hour ?? config.scoreResetHour);
   const fetchedAt = formatDateTime(new Date(), config.timezone);
@@ -381,7 +366,6 @@ async function collectMembersAndLogs(page, config, schoolId, authToken) {
       }
 
       const teamPayload = await getJson(
-        page,
         `${apiBase}/my-brigade/teams/${team.teamId}/members`,
         authToken,
       );
@@ -403,7 +387,7 @@ async function collectMembersAndLogs(page, config, schoolId, authToken) {
           ? `${apiBase}/my-team/members/${member.studentId}/score-logs?limit=${config.logLimit}`
           : `${apiBase}/my-brigade/teams/${team.teamId}/members/${member.studentId}/score-logs?limit=${config.logLimit}`;
 
-      const logs = await getJson(page, scoreLogUrl, authToken);
+      const logs = await getJson(scoreLogUrl, authToken);
 
       for (const log of logs ?? []) {
         const logicalDate = log.logged_at
@@ -841,20 +825,12 @@ async function writeAllSheets(sheetsClient, payload) {
 async function main() {
   const config = loadConfig();
   const storageState = requireStorageState();
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
-    storageState,
-  });
-  const page = await context.newPage();
+  const authToken = readAccessTokenFromStorageState(storageState);
 
   try {
-    await page.goto(config.partnersUrl, { waitUntil: "domcontentloaded" });
-    const authToken = await page.evaluate(() => localStorage.getItem("accessToken") || "");
-    if (!authToken) {
-      throw new Error("Missing accessToken in localStorage. Please run `python run.py auth` again and ensure you are logged in.");
-    }
-    const schoolId = config.schoolId || (await resolveSchoolId(page, config.partnersUrl));
-    const collected = await collectMembersAndLogs(page, config, schoolId, authToken);
+    const schoolId =
+      config.schoolId || (await resolveSchoolId(config.partnersUrl, authToken, config.apiBaseUrl));
+    const collected = await collectMembersAndLogs(config, schoolId, authToken);
     const sheetsClient = new GoogleSheetsClient({
       ...config.google,
       spreadsheetId: config.sheetId,
@@ -889,8 +865,6 @@ async function main() {
     console.log(`Synced ${collected.members.length} members and ${collected.rawLogs.length} logs.`);
     console.log(`Daily rows: ${dailyRows.length}, weekly rows: ${weeklyRows.length}`);
   } finally {
-    await context.close();
-    await browser.close();
   }
 }
 
