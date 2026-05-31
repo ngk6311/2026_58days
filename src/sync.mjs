@@ -19,6 +19,7 @@ const SHEET_NAMES = [
   "daily_status",
   "weekly_status",
   "weekly_dashboard",
+  "weekly_history",
   "run_log",
 ];
 
@@ -279,8 +280,43 @@ function buildLogRow(log, member, fetchedAt, logicalDate) {
     points: Number(log.points ?? 0),
     loggedAt: log.logged_at ?? "",
     logicalDate,
+    weeklyLogicalDate: logicalDate,
     fetchedAt,
   };
+}
+
+function isMondayDateKey(dateKey) {
+  if (!dateKey) {
+    return false;
+  }
+  return new Date(`${dateKey}T00:00:00Z`).getUTCDay() === 1;
+}
+
+function adjustWeeklyLogicalDates(rawLogs) {
+  const targetQuest = "親證分享";
+  const grouped = new Map();
+
+  for (const log of rawLogs) {
+    log.weeklyLogicalDate = log.logicalDate;
+    if (log.questTitle !== targetQuest || !isMondayDateKey(log.logicalDate)) {
+      continue;
+    }
+
+    const key = `${log.memberId}::${log.logicalDate}`;
+    const logs = grouped.get(key) ?? [];
+    logs.push(log);
+    grouped.set(key, logs);
+  }
+
+  for (const [key, logs] of grouped.entries()) {
+    logs.sort((a, b) => String(a.loggedAt).localeCompare(String(b.loggedAt)));
+    const [, mondayDate] = key.split("::");
+    if (logs.length > 0) {
+      logs[0].weeklyLogicalDate = addDays(mondayDate, -1);
+    }
+  }
+
+  return rawLogs;
 }
 
 async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken) {
@@ -372,6 +408,8 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
       }
     }
   }
+
+  adjustWeeklyLogicalDates(rawLogs);
 
   return {
     members,
@@ -486,9 +524,8 @@ function getCampaignWeekInfo(config, scoreResetHour) {
   };
 }
 
-function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreResetHour) {
+function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign) {
   const isBrigadeView = teamConfig.roleType === "brigade";
-  const campaign = getCampaignWeekInfo(appConfig, scoreResetHour);
   const weekDates = campaign.weekDates;
   const monday = campaign.currentWeekStart;
   const sunday = campaign.currentWeekEnd;
@@ -566,6 +603,9 @@ function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreRese
     .map((member) => {
       const allMemberLogs = logsByMember.get(member.memberId) ?? [];
       const memberLogs = allMemberLogs.filter((log) => log.logicalDate >= monday && log.logicalDate <= sunday);
+      const memberWeekLogs = allMemberLogs.filter(
+        (log) => (log.weeklyLogicalDate ?? log.logicalDate) >= monday && (log.weeklyLogicalDate ?? log.logicalDate) <= sunday,
+      );
 
       const dailyCounts = weekDates.map((dateKey) => {
         const dayLogs = memberLogs.filter((log) => log.logicalDate === dateKey);
@@ -578,8 +618,12 @@ function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreRese
       const dailyCells = dailyCounts.map((count) => (count >= 3 ? "✓" : String(count)));
       const weeklyTaskChecks = taskMatchers.map((task) => {
         const sourceLogs = task.rangeStart
-          ? allMemberLogs.filter((log) => log.logicalDate >= task.rangeStart && log.logicalDate <= task.rangeEnd)
-          : memberLogs;
+          ? allMemberLogs.filter(
+              (log) =>
+                (log.weeklyLogicalDate ?? log.logicalDate) >= task.rangeStart &&
+                (log.weeklyLogicalDate ?? log.logicalDate) <= task.rangeEnd,
+            )
+          : memberWeekLogs;
         const matchCount = sourceLogs.filter((log) => task.match(log.questTitle)).length;
         if (matchCount >= task.requiredCount) {
           return "✓";
@@ -598,6 +642,225 @@ function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreRese
   return [...metaRows, ...memberRows];
 }
 
+function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreResetHour) {
+  return buildWeeklyDashboardForCampaign(
+    teamConfig,
+    members,
+    rawLogs,
+    getCampaignWeekInfo(appConfig, scoreResetHour),
+  );
+}
+
+function buildWeeklyHistorySection(teamConfig, members, rawLogs, campaign) {
+  const weeklyDashboardRows = buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign);
+  const headerRow = weeklyDashboardRows[4] ?? [];
+  const memberRows = weeklyDashboardRows.slice(5);
+  const sectionLabel = `${campaign.currentWeekLabel} ${campaign.currentWeekStart} ~ ${campaign.currentWeekEnd}`;
+  return {
+    sectionLabel,
+    rows: [[sectionLabel], headerRow, ...memberRows, [], [], []],
+  };
+}
+
+function buildWeeklyHistoryRows(teamConfig, appConfig, members, rawLogs, scoreResetHour) {
+  const today = todayKey(appConfig.timezone, scoreResetHour);
+  const campaigns = CAMPAIGN_WEEKS.filter((week) => week.start <= today);
+  const rows = [];
+
+  for (const week of campaigns) {
+    const weekDates = [];
+    let cursor = week.start;
+    while (cursor <= week.end) {
+      weekDates.push(cursor);
+      cursor = addDays(cursor, 1);
+    }
+    while (weekDates.length < 7) {
+      weekDates.push("");
+    }
+
+    const cycleWeeks = CAMPAIGN_WEEKS.filter((item) => item.cycle === week.cycle);
+    const campaign = {
+      currentWeekLabel: week.weekLabel,
+      currentWeekStart: week.start,
+      currentWeekEnd: week.end,
+      weekDates,
+      themeCycleLabel:
+        cycleWeeks.length > 1
+          ? `${cycleWeeks[0].weekLabel}~${cycleWeeks[cycleWeeks.length - 1].weekLabel}`
+          : cycleWeeks[0].weekLabel,
+      themeCycleStart: cycleWeeks[0].start,
+      themeCycleEnd: cycleWeeks[cycleWeeks.length - 1].end,
+    };
+
+    const section = buildWeeklyHistorySection(teamConfig, members, rawLogs, campaign);
+    rows.push(...section.rows);
+  }
+
+  return rows;
+}
+
+async function applyWeeklyHistoryFormatting(sheetsClient, rows) {
+  const sheet = await sheetsClient.getSheetByTitle("weekly_history");
+  if (!sheet) {
+    return;
+  }
+
+  const sheetId = sheet.properties.sheetId;
+  const rowCount = rows.length;
+  const colCount = Math.max(...rows.map((row) => row.length), 1);
+  const existingRules = sheet.conditionalFormats?.length ?? 0;
+  const requests = [
+    {
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: 0,
+          endRowIndex: rowCount,
+          startColumnIndex: 0,
+          endColumnIndex: colCount,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 1, green: 1, blue: 1 },
+            horizontalAlignment: "CENTER",
+            textFormat: { fontSize: 10 },
+          },
+        },
+        fields: "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)",
+      },
+    },
+    {
+      updateSheetProperties: {
+        properties: {
+          sheetId,
+          gridProperties: { frozenRowCount: 0, frozenColumnCount: 0 },
+        },
+        fields: "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+      },
+    },
+  ];
+
+  for (let index = existingRules - 1; index >= 0; index -= 1) {
+    requests.push({
+      deleteConditionalFormatRule: {
+        sheetId,
+        index,
+      },
+    });
+  }
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    const firstCell = String(row?.[0] ?? "");
+    if (firstCell.includes("週") && firstCell.includes("~")) {
+      requests.push({
+        repeatCell: {
+          range: {
+            sheetId,
+            startRowIndex: rowIndex,
+            endRowIndex: rowIndex + 1,
+            startColumnIndex: 0,
+            endColumnIndex: colCount,
+          },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 0.95, green: 0.91, blue: 0.8 },
+              textFormat: { bold: true, fontSize: 11 },
+              horizontalAlignment: "LEFT",
+            },
+          },
+          fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
+        },
+      });
+    }
+
+    const secondCell = String(row?.[1] ?? "");
+    if (firstCell === "隊員" || secondCell === "隊員") {
+      requests.push({
+        repeatCell: {
+          range: {
+            sheetId,
+            startRowIndex: rowIndex,
+            endRowIndex: rowIndex + 1,
+            startColumnIndex: 0,
+            endColumnIndex: colCount,
+          },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 0.15, green: 0.38, blue: 0.22 },
+              textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+              horizontalAlignment: "CENTER",
+            },
+          },
+          fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
+        },
+      });
+    }
+  }
+
+  if (colCount > 0) {
+    requests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: 0,
+          endIndex: 1,
+        },
+        properties: { pixelSize: 120 },
+        fields: "pixelSize",
+      },
+    });
+  }
+
+  if (colCount > 1) {
+    requests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: 1,
+          endIndex: 2,
+        },
+        properties: { pixelSize: 120 },
+        fields: "pixelSize",
+      },
+    });
+  }
+
+  requests.push({
+    addConditionalFormatRule: {
+      index: 0,
+      rule: {
+        ranges: [
+          {
+            sheetId,
+            startRowIndex: 0,
+            endRowIndex: rowCount,
+            startColumnIndex: 0,
+            endColumnIndex: colCount,
+          },
+        ],
+        booleanRule: {
+          condition: {
+            type: "TEXT_EQ",
+            values: [{ userEnteredValue: "✓" }],
+          },
+          format: {
+            backgroundColor: { red: 0.84, green: 0.93, blue: 0.82 },
+            textFormat: {
+              bold: true,
+              foregroundColor: { red: 0.11, green: 0.36, blue: 0.16 },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  await sheetsClient.batchUpdate({ requests });
+}
+
 function aggregateStatus(rawLogs, members, rules, config, scoreResetHour) {
   const dateKeys = enumerateDateKeys(todayKey(config.timezone, scoreResetHour), config.lookbackDays);
   const groupedDaily = new Map();
@@ -609,7 +872,7 @@ function aggregateStatus(rawLogs, members, rules, config, scoreResetHour) {
     dailyLogs.push(log);
     groupedDaily.set(dailyKey, dailyLogs);
 
-    const weekStart = weekStartKey(log.logicalDate, config.weekStart);
+    const weekStart = weekStartKey(log.weeklyLogicalDate ?? log.logicalDate, config.weekStart);
     const weeklyKey = `${log.memberId}::${weekStart}`;
     const weeklyLogs = groupedWeekly.get(weeklyKey) ?? [];
     weeklyLogs.push(log);
@@ -678,7 +941,18 @@ async function seedTaskRuleSheetIfEmpty(sheetsClient) {
 }
 
 async function writeAllSheets(sheetsClient, payload) {
-  const { members, rawLogs, questCatalog, dailyRows, weeklyRows, weeklyDashboardRows, scope, scoreResetHour, timezone } = payload;
+  const {
+    members,
+    rawLogs,
+    questCatalog,
+    dailyRows,
+    weeklyRows,
+    weeklyDashboardRows,
+    weeklyHistoryRows,
+    scope,
+    scoreResetHour,
+    timezone,
+  } = payload;
   const syncedAt = formatDateTime(new Date(), timezone);
 
   await sheetsClient.ensureSheets(SHEET_NAMES);
@@ -746,6 +1020,7 @@ async function writeAllSheets(sheetsClient, payload) {
       row.lastCompletedAt,
     ]),
     weekly_dashboard: weeklyDashboardRows,
+    weekly_history: weeklyHistoryRows,
     run_log: [
       RUN_LOG_HEADERS,
       [
@@ -760,6 +1035,8 @@ async function writeAllSheets(sheetsClient, payload) {
       ...previousRows.slice(0, 49),
     ],
   });
+
+  await applyWeeklyHistoryFormatting(sheetsClient, weeklyHistoryRows);
 }
 
 async function syncTeam(appConfig, teamConfig) {
@@ -791,6 +1068,13 @@ async function syncTeam(appConfig, teamConfig) {
     collected.rawLogs,
     collected.scoreResetHour,
   );
+  const weeklyHistoryRows = buildWeeklyHistoryRows(
+    teamConfig,
+    appConfig,
+    collected.members,
+    collected.rawLogs,
+    collected.scoreResetHour,
+  );
 
   console.log(`[${teamConfig.teamKey}] Writing Google Sheets...`);
   await writeAllSheets(sheetsClient, {
@@ -799,6 +1083,7 @@ async function syncTeam(appConfig, teamConfig) {
     dailyRows,
     weeklyRows,
     weeklyDashboardRows,
+    weeklyHistoryRows,
     timezone: appConfig.timezone,
   });
 

@@ -117,6 +117,11 @@ export class GoogleSheetsClient {
     return this.api("", { query: { includeGridData: false } });
   }
 
+  async getSheetByTitle(title) {
+    const spreadsheet = await this.getSpreadsheet();
+    return spreadsheet.sheets.find((sheet) => sheet.properties.title === title) ?? null;
+  }
+
   async ensureSheets(sheetTitles) {
     const spreadsheet = await this.getSpreadsheet();
     const existing = new Set(spreadsheet.sheets.map((sheet) => sheet.properties.title));
