@@ -65,5 +65,32 @@ jobs:
             printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM2 }}' > .auth/team2-storage-state.json
           fi
 
+      - name: Validate team storage states
+        shell: bash
+        run: |
+          echo "teams.json references:"
+          cat teams.json
+          echo ""
+          echo "Checking expected storage-state files..."
+
+          if [[ -f .auth/team7-storage-state.json ]]; then
+            echo "team7 storage state: OK"
+          else
+            echo "::error::Missing .auth/team7-storage-state.json. Add PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7 or fallback PLAYWRIGHT_STORAGE_STATE_JSON."
+            exit 1
+          fi
+
+          if grep -q '"team_key"[[:space:]]*:[[:space:]]*"team2"' teams.json; then
+            if [[ -f .auth/team2-storage-state.json ]]; then
+              echo "team2 storage state: OK"
+            else
+              echo "::error::Missing .auth/team2-storage-state.json. Check GitHub secret PLAYWRIGHT_STORAGE_STATE_JSON_TEAM2 and make sure it is saved under Repository secrets."
+              exit 1
+            fi
+          fi
+
+          echo "Available auth files:"
+          ls -la .auth
+
       - name: Run sync
         run: python run.py sync
