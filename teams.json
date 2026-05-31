@@ -31,5 +31,27 @@
     "web_app_url": "",
     "storage_state_path": ".auth/team3-storage-state.json",
     "enabled": true
+  },
+  {
+    "team_key": "team4",
+    "team_name": "第四隊",
+    "sheet_id": "18wMANKPWeaEyGcnhQ54hzwQ9k3vqJJ-QwyV1UyICwjA",
+    "partners_url": "https://www.bigsmileunity.com/bigsmile/fortune-game/partners",
+    "school_id": "yOKCHFfpakSWiRcUcMjl",
+    "api_base_url": "https://sincheng-api.playworld.com.tw",
+    "web_app_url": "",
+    "storage_state_path": ".auth/team4-storage-state.json",
+    "enabled": true
+  },
+  {
+    "team_key": "brigade1",
+    "team_name": "大隊長",
+    "sheet_id": "1EBm-0oK3Gtmj6x0phNzj-P0q0bJ2WvRvL7QBf30eodU",
+    "partners_url": "https://www.bigsmileunity.com/bigsmile/fortune-game/partners",
+    "school_id": "yOKCHFfpakSWiRcUcMjl",
+    "api_base_url": "https://sincheng-api.playworld.com.tw",
+    "web_app_url": "",
+    "storage_state_path": ".auth/brigade1-storage-state.json",
+    "enabled": true
   }
 ]
