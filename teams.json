@@ -1,0 +1,24 @@
+[
+  {
+    "team_key": "team7",
+    "team_name": "7開得勝",
+    "sheet_id": "1z9mcpfCD3B2whGMuNizQPSpiqhCEFz7Y6Srfcvce320",
+    "partners_url": "https://www.bigsmileunity.com/bigsmile/fortune-game/partners",
+    "school_id": "yOKCHFfpakSWiRcUcMjl",
+    "api_base_url": "https://sincheng-api.playworld.com.tw",
+    "web_app_url": "https://script.google.com/macros/s/AKfycby4THu-ns9JVXfHMujxGN7bQTujyKp-Pn4O6-Lb7_wlhF-svhdMuce07lPpSEMtFkxB/exec",
+    "storage_state_path": ".auth/team7-storage-state.json",
+    "enabled": true
+  },
+  {
+    "team_key": "team2",
+    "team_name": "第二小隊",
+    "sheet_id": "1wXdbgQa2o5kLcCA0-BKIQejaiGGTCxbwy7KmelDnoQA",
+    "partners_url": "https://www.bigsmileunity.com/bigsmile/fortune-game/partners",
+    "school_id": "yOKCHFfpakSWiRcUcMjl",
+    "api_base_url": "https://sincheng-api.playworld.com.tw",
+    "web_app_url": "",
+    "storage_state_path": ".auth/team2-storage-state.json",
+    "enabled": true
+  }
+]

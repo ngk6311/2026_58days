@@ -70,11 +70,9 @@ def run_command(command: list[str]) -> None:
 
 def ensure_dependencies() -> tuple[str, str]:
     node_path, npm_path = ensure_node_tools()
-    if (ROOT / "node_modules").exists():
-        return node_path, npm_path
-
-    print("第一次執行，正在安裝必要套件...")
-    run_command([npm_path, "install"])
+    if not (ROOT / "node_modules").exists():
+      print("第一次執行，正在安裝必要套件...")
+      run_command([npm_path, "install"])
     return node_path, npm_path
 
 
@@ -114,6 +112,18 @@ def cmd_init() -> None:
             "FORTUNE_SHEET_ID",
             defaults.get("FORTUNE_SHEET_ID", ""),
         ),
+        "FORTUNE_SCHOOL_ID": current.get(
+            "FORTUNE_SCHOOL_ID",
+            defaults.get("FORTUNE_SCHOOL_ID", ""),
+        ),
+        "FORTUNE_API_BASE_URL": current.get(
+            "FORTUNE_API_BASE_URL",
+            defaults.get("FORTUNE_API_BASE_URL", "https://sincheng-api.playworld.com.tw"),
+        ),
+        "FORTUNE_WEB_APP_URL": current.get(
+            "FORTUNE_WEB_APP_URL",
+            defaults.get("FORTUNE_WEB_APP_URL", ""),
+        ),
         "FORTUNE_TIMEZONE": current.get(
             "FORTUNE_TIMEZONE",
             defaults.get("FORTUNE_TIMEZONE", "Asia/Taipei"),
@@ -149,10 +159,13 @@ def cmd_init() -> None:
     print("接著請把 Google service account JSON 放到 credentials.json，或填你指定的路徑。")
 
 
-def cmd_auth() -> None:
+def cmd_auth(team: str | None) -> None:
     _, npm_path = ensure_dependencies()
     ensure_playwright_browser(npm_path)
-    run_command([npm_path, "run", "auth"])
+    command = [find_executable("node") or "node", "src/bootstrap-auth.mjs"]
+    if team:
+        command.append(team)
+    run_command(command)
 
 
 def cmd_sync() -> None:
@@ -162,10 +175,10 @@ def cmd_sync() -> None:
     run_command([npm_path, "run", "sync"])
 
 
-def cmd_all() -> None:
+def cmd_all(team: str | None) -> None:
     if not ENV_PATH.exists():
         cmd_init()
-    cmd_auth()
+    cmd_auth(team)
     cmd_sync()
 
 
@@ -176,16 +189,17 @@ def main() -> None:
         choices=["init", "auth", "sync", "all"],
         help="init: 產生設定, auth: 登入授權, sync: 同步資料, all: 全部跑一次",
     )
+    parser.add_argument("--team", help="team_key for multi-team auth", default=None)
     args = parser.parse_args()
 
     if args.command == "init":
         cmd_init()
     elif args.command == "auth":
-        cmd_auth()
+        cmd_auth(args.team)
     elif args.command == "sync":
         cmd_sync()
     else:
-        cmd_all()
+        cmd_all(args.team)
 
 
 if __name__ == "__main__":

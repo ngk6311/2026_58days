@@ -135,10 +135,10 @@ const CAMPAIGN_WEEKS = [
   { weekLabel: "第9週", start: "2026-07-20", end: "2026-07-21", cycle: 5 },
 ];
 
-function requireStorageState() {
-  const filePath = path.resolve(".auth/storage-state.json");
+function requireStorageState(storageStatePath) {
+  const filePath = path.resolve(storageStatePath);
   if (!fs.existsSync(filePath)) {
-    throw new Error("Missing .auth/storage-state.json. Run `npm run auth` first.");
+    throw new Error(`Missing storage state: ${filePath}. Run auth for this team first.`);
   }
   return filePath;
 }
@@ -152,65 +152,33 @@ function readAccessTokenFromStorageState(storageStatePath) {
       }
     }
   }
-  throw new Error(
-    "Missing accessToken in storage-state.json. Please run `python run.py auth` again and ensure you are logged in.",
-  );
+  throw new Error(`Missing accessToken in ${storageStatePath}. Please run auth again.`);
 }
 
 function boolCell(value) {
   return value ? "TRUE" : "FALSE";
 }
 
-function parseSheetIdFromUrl(url) {
-  const match = url.match(/\/schools\/([^/]+)\/fortune-game/);
-  return match?.[1] ?? null;
-}
-
 function parseSchoolSlugFromPartnersUrl(url) {
   try {
     const parsed = new URL(url);
     const segments = parsed.pathname.split("/").filter(Boolean);
-    const slugIndex = segments.indexOf("bigsmile") >= 0 ? segments.indexOf("bigsmile") : 0;
-
-    if (segments.length >= 1 && segments[1] === "fortune-game") {
+    if (segments.length >= 2 && segments[1] === "fortune-game") {
       return segments[0];
     }
-
-    if (segments.length >= 2 && segments[1] === "bigsmile") {
-      return segments[1];
-    }
-
     return segments[0] ?? null;
   } catch {
     return null;
   }
 }
 
-function extractSchoolIdFromHtml(html) {
-  const matches = [
-    html.match(/"school_id":"([^"]+)"/),
-    html.match(/"initialSchoolId":"([^"]+)"/),
-    html.match(/\/api\/v1\/schools\/([^/]+)\/fortune_game/),
-    html.match(/"schoolInfo":\{"id":"([^"]+)"/),
-    html.match(/"school":\{[^}]*"id":"([^"]+)"/),
-  ];
-
-  for (const match of matches) {
-    if (match?.[1]) {
-      return match[1];
-    }
-  }
-
-  return null;
-}
-
-async function resolveSchoolId(partnersUrl, authToken, apiBaseUrl) {
-  const schoolSlug = parseSchoolSlugFromPartnersUrl(partnersUrl);
+async function resolveSchoolId(teamConfig, authToken) {
+  const schoolSlug = parseSchoolSlugFromPartnersUrl(teamConfig.partnersUrl);
   if (!schoolSlug) {
-    throw new Error("Could not resolve school slug from partners URL.");
+    throw new Error(`Could not resolve school slug from ${teamConfig.partnersUrl}`);
   }
 
-  const url = `${apiBaseUrl}/api/v1/public/schoolsInfo/${schoolSlug}`;
+  const url = `${teamConfig.apiBaseUrl}/api/v1/public/schoolsInfo/${schoolSlug}`;
   const response = await fetch(url, {
     headers: {
       Accept: "application/json, text/plain, */*",
@@ -218,14 +186,14 @@ async function resolveSchoolId(partnersUrl, authToken, apiBaseUrl) {
     },
   });
 
-  if (!response.ok()) {
+  if (!response.ok) {
     throw new Error(`Failed to resolve school id: ${response.status} ${response.statusText}`);
   }
 
   const data = await response.json();
   const schoolId = data?.schoolInfo?.id ?? data?.id ?? data?.school?.id ?? null;
   if (!schoolId) {
-    throw new Error("Could not resolve school id from public schoolsInfo API.");
+    throw new Error(`Could not resolve school id for slug ${schoolSlug}`);
   }
   return schoolId;
 }
@@ -313,16 +281,16 @@ function buildLogRow(log, member, fetchedAt, logicalDate) {
   };
 }
 
-async function collectMembersAndLogs(config, schoolId, authToken) {
-  const apiBase = `${config.apiBaseUrl}/api/v1/schools/${schoolId}/fortune_game`;
+async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken) {
+  const apiBase = `${teamConfig.apiBaseUrl}/api/v1/schools/${schoolId}/fortune_game`;
   const [teamData, publicConfig] = await Promise.all([
     getJson(`${apiBase}/my-team/members`, authToken),
     getJson(`${apiBase}/config/public`, authToken),
   ]);
   const brigadeData = await getJsonOptional(`${apiBase}/my-brigade`, authToken);
 
-  const scoreResetHour = Number(publicConfig?.score_reset_hour ?? config.scoreResetHour);
-  const fetchedAt = formatDateTime(new Date(), config.timezone);
+  const scoreResetHour = Number(publicConfig?.score_reset_hour ?? appConfig.scoreResetHour);
+  const fetchedAt = formatDateTime(new Date(), appConfig.timezone);
   const members = [];
   const rawLogs = [];
   const logIds = new Set();
@@ -332,7 +300,6 @@ async function collectMembersAndLogs(config, schoolId, authToken) {
   const notes = [isBrigadeCaptain ? "brigade captain" : "team leader/member"];
 
   const teamsToSync = [];
-
   if (isBrigadeCaptain) {
     for (const team of brigadeData?.teams ?? []) {
       teamsToSync.push({
@@ -350,12 +317,10 @@ async function collectMembersAndLogs(config, schoolId, authToken) {
   }
 
   const teamMemberMap = new Map();
-
   if (teamData?.team) {
-    const ownMembers = teamData.members ?? [];
     teamMemberMap.set(
       teamData.team.id,
-      ownMembers.map((member) => normalizeMember(teamData.team, member)),
+      (teamData.members ?? []).map((member) => normalizeMember(teamData.team, member)),
     );
   }
 
@@ -364,12 +329,10 @@ async function collectMembersAndLogs(config, schoolId, authToken) {
       if (teamMemberMap.has(team.teamId)) {
         continue;
       }
-
       const teamPayload = await getJson(
         `${apiBase}/my-brigade/teams/${team.teamId}/members`,
         authToken,
       );
-
       teamMemberMap.set(
         team.teamId,
         (teamPayload?.members ?? []).map((member) => normalizeMember(teamPayload.team ?? team, member)),
@@ -384,17 +347,15 @@ async function collectMembersAndLogs(config, schoolId, authToken) {
     for (const member of teamMembers) {
       const scoreLogUrl =
         team.isCurrentTeam || !isBrigadeCaptain
-          ? `${apiBase}/my-team/members/${member.studentId}/score-logs?limit=${config.logLimit}`
-          : `${apiBase}/my-brigade/teams/${team.teamId}/members/${member.studentId}/score-logs?limit=${config.logLimit}`;
-
+          ? `${apiBase}/my-team/members/${member.studentId}/score-logs?limit=${appConfig.logLimit}`
+          : `${apiBase}/my-brigade/teams/${team.teamId}/members/${member.studentId}/score-logs?limit=${appConfig.logLimit}`;
       const logs = await getJson(scoreLogUrl, authToken);
 
       for (const log of logs ?? []) {
         const logicalDate = log.logged_at
-          ? zonedDateKey(new Date(log.logged_at), config.timezone, scoreResetHour)
+          ? zonedDateKey(new Date(log.logged_at), appConfig.timezone, scoreResetHour)
           : "";
         const row = buildLogRow(log, member, fetchedAt, logicalDate);
-
         if (!logIds.has(row.logId)) {
           logIds.add(row.logId);
           rawLogs.push(row);
@@ -441,17 +402,14 @@ function matchesRule(questTitle, rule) {
   if (!questTitle) {
     return false;
   }
-
   if (rule.matchType === "exact") {
     return questTitle === rule.matchValue;
   }
-
   return questTitle.includes(rule.matchValue);
 }
 
 function buildQuestCatalog(rawLogs) {
   const map = new Map();
-
   for (const log of rawLogs) {
     const existing = map.get(log.questTitle) ?? {
       questTitle: log.questTitle,
@@ -460,17 +418,14 @@ function buildQuestCatalog(rawLogs) {
       sampleMember: log.memberName,
       sampleTeam: log.teamName,
     };
-
     existing.timesSeen += 1;
     if (!existing.lastSeenAt || log.loggedAt > existing.lastSeenAt) {
       existing.lastSeenAt = log.loggedAt;
       existing.sampleMember = log.memberName;
       existing.sampleTeam = log.teamName;
     }
-
     map.set(log.questTitle, existing);
   }
-
   return [...map.values()].sort((a, b) => a.questTitle.localeCompare(b.questTitle, "zh-Hant"));
 }
 
@@ -482,8 +437,7 @@ function weekDatesForDashboard(config, scoreResetHour) {
 
 function getCampaignWeekInfo(config, scoreResetHour) {
   const today = todayKey(config.timezone, scoreResetHour);
-  const matchedWeek =
-    CAMPAIGN_WEEKS.find((week) => week.start <= today && today <= week.end) ?? null;
+  const matchedWeek = CAMPAIGN_WEEKS.find((week) => week.start <= today && today <= week.end) ?? null;
 
   if (!matchedWeek) {
     const weekDates = weekDatesForDashboard(config, scoreResetHour);
@@ -509,9 +463,6 @@ function getCampaignWeekInfo(config, scoreResetHour) {
   }
 
   const cycleWeeks = CAMPAIGN_WEEKS.filter((week) => week.cycle === matchedWeek.cycle);
-  const themeCycleStart = cycleWeeks[0].start;
-  const themeCycleEnd = cycleWeeks[cycleWeeks.length - 1].end;
-
   return {
     currentWeekLabel: matchedWeek.weekLabel,
     currentWeekStart: matchedWeek.start,
@@ -521,13 +472,13 @@ function getCampaignWeekInfo(config, scoreResetHour) {
       cycleWeeks.length > 1
         ? `${cycleWeeks[0].weekLabel}~${cycleWeeks[cycleWeeks.length - 1].weekLabel}`
         : cycleWeeks[0].weekLabel,
-    themeCycleStart,
-    themeCycleEnd,
+    themeCycleStart: cycleWeeks[0].start,
+    themeCycleEnd: cycleWeeks[cycleWeeks.length - 1].end,
   };
 }
 
-function buildWeeklyDashboard(members, rawLogs, config, scoreResetHour) {
-  const campaign = getCampaignWeekInfo(config, scoreResetHour);
+function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreResetHour) {
+  const campaign = getCampaignWeekInfo(appConfig, scoreResetHour);
   const weekDates = campaign.weekDates;
   const monday = campaign.currentWeekStart;
   const sunday = campaign.currentWeekEnd;
@@ -540,7 +491,6 @@ function buildWeeklyDashboard(members, rawLogs, config, scoreResetHour) {
     logsByMember.get(log.memberId).push(log);
   }
 
-  const checkmark = (value) => (value ? "✓" : "");
   const dailyQuestOptions = [
     "當下之舞",
     "打拳",
@@ -550,6 +500,7 @@ function buildWeeklyDashboard(members, rawLogs, config, scoreResetHour) {
     "感恩冥想",
     "亥/子時入睡",
   ];
+
   const taskMatchers = [
     {
       title: "圓夢計畫親證 (2次)",
@@ -581,9 +532,7 @@ function buildWeeklyDashboard(members, rawLogs, config, scoreResetHour) {
       "統計週期",
       `${campaign.currentWeekLabel} ${monday} ~ ${sunday}`,
       "手機同步",
-      config.webAppUrl
-        ? `=HYPERLINK("${config.webAppUrl}","手機點我同步")`
-        : "",
+      teamConfig.webAppUrl ? `=HYPERLINK("${teamConfig.webAppUrl}","手機點我同步")` : "",
     ],
     ["主題親證週期", `${campaign.themeCycleLabel} ${campaign.themeCycleStart} ~ ${campaign.themeCycleEnd}`],
     ["說明", "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，該輪完成 1 次即打勾。"],
@@ -600,16 +549,12 @@ function buildWeeklyDashboard(members, rawLogs, config, scoreResetHour) {
     })
     .map((member) => {
       const allMemberLogs = logsByMember.get(member.memberId) ?? [];
-      const memberLogs = allMemberLogs.filter(
-        (log) => log.logicalDate >= monday && log.logicalDate <= sunday,
-      );
+      const memberLogs = allMemberLogs.filter((log) => log.logicalDate >= monday && log.logicalDate <= sunday);
 
       const dailyCounts = weekDates.map((dateKey) => {
         const dayLogs = memberLogs.filter((log) => log.logicalDate === dateKey);
         const completedOptions = new Set(
-          dayLogs
-            .map((log) => log.questTitle)
-            .filter((questTitle) => dailyQuestOptions.includes(questTitle)),
+          dayLogs.map((log) => log.questTitle).filter((questTitle) => dailyQuestOptions.includes(questTitle)),
         );
         return completedOptions.size;
       });
@@ -617,9 +562,7 @@ function buildWeeklyDashboard(members, rawLogs, config, scoreResetHour) {
       const dailyCells = dailyCounts.map((count) => (count >= 3 ? "✓" : String(count)));
       const weeklyTaskChecks = taskMatchers.map((task) => {
         const sourceLogs = task.rangeStart
-          ? allMemberLogs.filter(
-              (log) => log.logicalDate >= task.rangeStart && log.logicalDate <= task.rangeEnd,
-            )
+          ? allMemberLogs.filter((log) => log.logicalDate >= task.rangeStart && log.logicalDate <= task.rangeEnd)
           : memberLogs;
         const matchCount = sourceLogs.filter((log) => task.match(log.questTitle)).length;
         if (matchCount >= task.requiredCount) {
@@ -631,11 +574,7 @@ function buildWeeklyDashboard(members, rawLogs, config, scoreResetHour) {
         return "";
       });
 
-      return [
-        member.memberName,
-        ...dailyCells,
-        ...weeklyTaskChecks,
-      ];
+      return [member.memberName, ...dailyCells, ...weeklyTaskChecks];
     });
 
   return [...metaRows, ...memberRows];
@@ -643,7 +582,6 @@ function buildWeeklyDashboard(members, rawLogs, config, scoreResetHour) {
 
 function aggregateStatus(rawLogs, members, rules, config, scoreResetHour) {
   const dateKeys = enumerateDateKeys(todayKey(config.timezone, scoreResetHour), config.lookbackDays);
-  const memberMap = new Map(members.map((member) => [member.memberId, member]));
   const groupedDaily = new Map();
   const groupedWeekly = new Map();
 
@@ -662,14 +600,12 @@ function aggregateStatus(rawLogs, members, rules, config, scoreResetHour) {
 
   const dailyRows = [];
   const weeklyRows = [];
-
   const dailyRules = rules.filter((rule) => rule.period === "daily");
   const weeklyRules = rules.filter((rule) => rule.period === "weekly");
 
   for (const member of members) {
     for (const dateKey of dateKeys) {
       const logs = groupedDaily.get(`${member.memberId}::${dateKey}`) ?? [];
-
       for (const rule of dailyRules) {
         const matches = logs.filter((log) => matchesRule(log.questTitle, rule));
         dailyRows.push({
@@ -690,7 +626,6 @@ function aggregateStatus(rawLogs, members, rules, config, scoreResetHour) {
     for (const startKey of weekStarts) {
       const logs = groupedWeekly.get(`${member.memberId}::${startKey}`) ?? [];
       const endKey = addDays(startKey, 6);
-
       for (const rule of weeklyRules) {
         const matches = logs.filter((log) => matchesRule(log.questTitle, rule));
         weeklyRows.push({
@@ -717,7 +652,6 @@ async function seedTaskRuleSheetIfEmpty(sheetsClient) {
   if (values.length > 0) {
     return;
   }
-
   await sheetsClient.writeSheet("task_rules", [
     TASK_RULE_HEADERS,
     ["example-daily", "FALSE", "示例每日任務", "daily", "contains", "晨間", "1", "把 FALSE 改成 TRUE 後才會納入統計"],
@@ -726,94 +660,79 @@ async function seedTaskRuleSheetIfEmpty(sheetsClient) {
 }
 
 async function writeAllSheets(sheetsClient, payload) {
-  const { members, rawLogs, questCatalog, dailyRows, weeklyRows, weeklyDashboardRows, scope } = payload;
-  const syncedAt = formatDateTime(new Date(), payload.config.timezone);
+  const { members, rawLogs, questCatalog, dailyRows, weeklyRows, weeklyDashboardRows, scope, scoreResetHour, timezone } = payload;
+  const syncedAt = formatDateTime(new Date(), timezone);
 
   await sheetsClient.ensureSheets(SHEET_NAMES);
   await seedTaskRuleSheetIfEmpty(sheetsClient);
 
-  await sheetsClient.writeSheet(
-    "members",
-    rowsFromObjects(MEMBER_HEADERS, members, (member) => [
-      member.teamId,
-      member.teamName,
-      member.memberId,
-      member.studentId,
-      member.memberName,
-      member.identityName,
-      boolCell(member.isTeamCaptain),
-      boolCell(member.isBrigadeCaptain),
-      member.todayScore,
-      member.weeklyScore,
-      member.totalScore,
-    ]),
-  );
+  await sheetsClient.writeSheet("members", rowsFromObjects(MEMBER_HEADERS, members, (member) => [
+    member.teamId,
+    member.teamName,
+    member.memberId,
+    member.studentId,
+    member.memberName,
+    member.identityName,
+    boolCell(member.isTeamCaptain),
+    boolCell(member.isBrigadeCaptain),
+    member.todayScore,
+    member.weeklyScore,
+    member.totalScore,
+  ]));
 
-  await sheetsClient.writeSheet(
-    "raw_logs",
-    rowsFromObjects(RAW_LOG_HEADERS, rawLogs, (log) => [
-      log.logId,
-      log.memberId,
-      log.studentId,
-      log.memberName,
-      log.teamId,
-      log.teamName,
-      log.questTitle,
-      log.sourceType,
-      log.points,
-      log.loggedAt,
-      log.logicalDate,
-      log.fetchedAt,
-    ]),
-  );
+  await sheetsClient.writeSheet("raw_logs", rowsFromObjects(RAW_LOG_HEADERS, rawLogs, (log) => [
+    log.logId,
+    log.memberId,
+    log.studentId,
+    log.memberName,
+    log.teamId,
+    log.teamName,
+    log.questTitle,
+    log.sourceType,
+    log.points,
+    log.loggedAt,
+    log.logicalDate,
+    log.fetchedAt,
+  ]));
 
-  await sheetsClient.writeSheet(
-    "quest_catalog",
-    rowsFromObjects(QUEST_CATALOG_HEADERS, questCatalog, (item) => [
-      item.questTitle,
-      item.timesSeen,
-      item.lastSeenAt,
-      item.sampleMember,
-      item.sampleTeam,
-    ]),
-  );
+  await sheetsClient.writeSheet("quest_catalog", rowsFromObjects(QUEST_CATALOG_HEADERS, questCatalog, (item) => [
+    item.questTitle,
+    item.timesSeen,
+    item.lastSeenAt,
+    item.sampleMember,
+    item.sampleTeam,
+  ]));
 
-  await sheetsClient.writeSheet(
-    "daily_status",
-    rowsFromObjects(DAILY_HEADERS, dailyRows, (row) => [
-      row.date,
-      row.teamName,
-      row.memberName,
-      row.taskName,
-      row.requiredCount,
-      row.actualCount,
-      boolCell(row.completed),
-      row.matchedQuests,
-      row.lastCompletedAt,
-    ]),
-  );
+  await sheetsClient.writeSheet("daily_status", rowsFromObjects(DAILY_HEADERS, dailyRows, (row) => [
+    row.date,
+    row.teamName,
+    row.memberName,
+    row.taskName,
+    row.requiredCount,
+    row.actualCount,
+    boolCell(row.completed),
+    row.matchedQuests,
+    row.lastCompletedAt,
+  ]));
 
-  await sheetsClient.writeSheet(
-    "weekly_status",
-    rowsFromObjects(WEEKLY_HEADERS, weeklyRows, (row) => [
-      row.weekStart,
-      row.weekEnd,
-      row.teamName,
-      row.memberName,
-      row.taskName,
-      row.requiredCount,
-      row.actualCount,
-      boolCell(row.completed),
-      row.matchedQuests,
-      row.lastCompletedAt,
-    ]),
-  );
+  await sheetsClient.writeSheet("weekly_status", rowsFromObjects(WEEKLY_HEADERS, weeklyRows, (row) => [
+    row.weekStart,
+    row.weekEnd,
+    row.teamName,
+    row.memberName,
+    row.taskName,
+    row.requiredCount,
+    row.actualCount,
+    boolCell(row.completed),
+    row.matchedQuests,
+    row.lastCompletedAt,
+  ]));
 
   await sheetsClient.writeSheet("weekly_dashboard", weeklyDashboardRows);
 
   const existingRunLog = await sheetsClient.getValues("run_log!A:G");
   const previousRows = existingRunLog.length > 1 ? existingRunLog.slice(1) : [];
-  const nextRows = [
+  await sheetsClient.writeSheet("run_log", [
     RUN_LOG_HEADERS,
     [
       syncedAt,
@@ -822,56 +741,56 @@ async function writeAllSheets(sheetsClient, payload) {
       rawLogs.length,
       dailyRows.length,
       weeklyRows.length,
-      `score reset hour=${payload.scoreResetHour}`,
+      `score reset hour=${scoreResetHour}`,
     ],
     ...previousRows.slice(0, 49),
-  ];
-  await sheetsClient.writeSheet("run_log", nextRows);
+  ]);
+}
+
+async function syncTeam(appConfig, teamConfig) {
+  const storageStatePath = requireStorageState(teamConfig.storageStatePath);
+  const authToken = readAccessTokenFromStorageState(storageStatePath);
+  const schoolId = teamConfig.schoolId || (await resolveSchoolId(teamConfig, authToken));
+  const collected = await collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken);
+
+  const sheetsClient = new GoogleSheetsClient({
+    ...appConfig.google,
+    spreadsheetId: teamConfig.sheetId,
+  });
+
+  const taskRules = await loadTaskRules(sheetsClient);
+  const questCatalog = buildQuestCatalog(collected.rawLogs);
+  const { dailyRows, weeklyRows } = aggregateStatus(
+    collected.rawLogs,
+    collected.members,
+    taskRules,
+    appConfig,
+    collected.scoreResetHour,
+  );
+  const weeklyDashboardRows = buildWeeklyDashboard(
+    teamConfig,
+    appConfig,
+    collected.members,
+    collected.rawLogs,
+    collected.scoreResetHour,
+  );
+
+  await writeAllSheets(sheetsClient, {
+    ...collected,
+    questCatalog,
+    dailyRows,
+    weeklyRows,
+    weeklyDashboardRows,
+    timezone: appConfig.timezone,
+  });
+
+  console.log(`[${teamConfig.teamKey}] Synced ${collected.members.length} members and ${collected.rawLogs.length} logs.`);
 }
 
 async function main() {
-  const config = loadConfig();
-  const storageState = requireStorageState();
-  const authToken = readAccessTokenFromStorageState(storageState);
-
-  try {
-    const schoolId =
-      config.schoolId || (await resolveSchoolId(config.partnersUrl, authToken, config.apiBaseUrl));
-    const collected = await collectMembersAndLogs(config, schoolId, authToken);
-    const sheetsClient = new GoogleSheetsClient({
-      ...config.google,
-      spreadsheetId: config.sheetId,
-    });
-
-    const taskRules = await loadTaskRules(sheetsClient);
-    const questCatalog = buildQuestCatalog(collected.rawLogs);
-    const { dailyRows, weeklyRows } = aggregateStatus(
-      collected.rawLogs,
-      collected.members,
-      taskRules,
-      config,
-      collected.scoreResetHour,
-    );
-    const weeklyDashboardRows = buildWeeklyDashboard(
-      collected.members,
-      collected.rawLogs,
-      config,
-      collected.scoreResetHour,
-    );
-
-    await writeAllSheets(sheetsClient, {
-      ...collected,
-      taskRules,
-      questCatalog,
-      dailyRows,
-      weeklyRows,
-      weeklyDashboardRows,
-      config,
-    });
-
-    console.log(`Synced ${collected.members.length} members and ${collected.rawLogs.length} logs.`);
-    console.log(`Daily rows: ${dailyRows.length}, weekly rows: ${weeklyRows.length}`);
-  } finally {
+  const appConfig = loadConfig();
+  for (const teamConfig of appConfig.teams) {
+    await syncTeam(appConfig, teamConfig);
   }
 }
 
