@@ -666,91 +666,90 @@ async function writeAllSheets(sheetsClient, payload) {
   await sheetsClient.ensureSheets(SHEET_NAMES);
   await seedTaskRuleSheetIfEmpty(sheetsClient);
 
-  await sheetsClient.writeSheet("members", rowsFromObjects(MEMBER_HEADERS, members, (member) => [
-    member.teamId,
-    member.teamName,
-    member.memberId,
-    member.studentId,
-    member.memberName,
-    member.identityName,
-    boolCell(member.isTeamCaptain),
-    boolCell(member.isBrigadeCaptain),
-    member.todayScore,
-    member.weeklyScore,
-    member.totalScore,
-  ]));
-
-  await sheetsClient.writeSheet("raw_logs", rowsFromObjects(RAW_LOG_HEADERS, rawLogs, (log) => [
-    log.logId,
-    log.memberId,
-    log.studentId,
-    log.memberName,
-    log.teamId,
-    log.teamName,
-    log.questTitle,
-    log.sourceType,
-    log.points,
-    log.loggedAt,
-    log.logicalDate,
-    log.fetchedAt,
-  ]));
-
-  await sheetsClient.writeSheet("quest_catalog", rowsFromObjects(QUEST_CATALOG_HEADERS, questCatalog, (item) => [
-    item.questTitle,
-    item.timesSeen,
-    item.lastSeenAt,
-    item.sampleMember,
-    item.sampleTeam,
-  ]));
-
-  await sheetsClient.writeSheet("daily_status", rowsFromObjects(DAILY_HEADERS, dailyRows, (row) => [
-    row.date,
-    row.teamName,
-    row.memberName,
-    row.taskName,
-    row.requiredCount,
-    row.actualCount,
-    boolCell(row.completed),
-    row.matchedQuests,
-    row.lastCompletedAt,
-  ]));
-
-  await sheetsClient.writeSheet("weekly_status", rowsFromObjects(WEEKLY_HEADERS, weeklyRows, (row) => [
-    row.weekStart,
-    row.weekEnd,
-    row.teamName,
-    row.memberName,
-    row.taskName,
-    row.requiredCount,
-    row.actualCount,
-    boolCell(row.completed),
-    row.matchedQuests,
-    row.lastCompletedAt,
-  ]));
-
-  await sheetsClient.writeSheet("weekly_dashboard", weeklyDashboardRows);
-
   const existingRunLog = await sheetsClient.getValues("run_log!A:G");
   const previousRows = existingRunLog.length > 1 ? existingRunLog.slice(1) : [];
-  await sheetsClient.writeSheet("run_log", [
-    RUN_LOG_HEADERS,
-    [
-      syncedAt,
-      scope,
-      members.length,
-      rawLogs.length,
-      dailyRows.length,
-      weeklyRows.length,
-      `score reset hour=${scoreResetHour}`,
+
+  await sheetsClient.writeSheets({
+    members: rowsFromObjects(MEMBER_HEADERS, members, (member) => [
+      member.teamId,
+      member.teamName,
+      member.memberId,
+      member.studentId,
+      member.memberName,
+      member.identityName,
+      boolCell(member.isTeamCaptain),
+      boolCell(member.isBrigadeCaptain),
+      member.todayScore,
+      member.weeklyScore,
+      member.totalScore,
+    ]),
+    raw_logs: rowsFromObjects(RAW_LOG_HEADERS, rawLogs, (log) => [
+      log.logId,
+      log.memberId,
+      log.studentId,
+      log.memberName,
+      log.teamId,
+      log.teamName,
+      log.questTitle,
+      log.sourceType,
+      log.points,
+      log.loggedAt,
+      log.logicalDate,
+      log.fetchedAt,
+    ]),
+    quest_catalog: rowsFromObjects(QUEST_CATALOG_HEADERS, questCatalog, (item) => [
+      item.questTitle,
+      item.timesSeen,
+      item.lastSeenAt,
+      item.sampleMember,
+      item.sampleTeam,
+    ]),
+    daily_status: rowsFromObjects(DAILY_HEADERS, dailyRows, (row) => [
+      row.date,
+      row.teamName,
+      row.memberName,
+      row.taskName,
+      row.requiredCount,
+      row.actualCount,
+      boolCell(row.completed),
+      row.matchedQuests,
+      row.lastCompletedAt,
+    ]),
+    weekly_status: rowsFromObjects(WEEKLY_HEADERS, weeklyRows, (row) => [
+      row.weekStart,
+      row.weekEnd,
+      row.teamName,
+      row.memberName,
+      row.taskName,
+      row.requiredCount,
+      row.actualCount,
+      boolCell(row.completed),
+      row.matchedQuests,
+      row.lastCompletedAt,
+    ]),
+    weekly_dashboard: weeklyDashboardRows,
+    run_log: [
+      RUN_LOG_HEADERS,
+      [
+        syncedAt,
+        scope,
+        members.length,
+        rawLogs.length,
+        dailyRows.length,
+        weeklyRows.length,
+        `score reset hour=${scoreResetHour}`,
+      ],
+      ...previousRows.slice(0, 49),
     ],
-    ...previousRows.slice(0, 49),
-  ]);
+  });
 }
 
 async function syncTeam(appConfig, teamConfig) {
+  console.log(`[${teamConfig.teamKey}] Starting sync...`);
   const storageStatePath = requireStorageState(teamConfig.storageStatePath);
   const authToken = readAccessTokenFromStorageState(storageStatePath);
   const schoolId = teamConfig.schoolId || (await resolveSchoolId(teamConfig, authToken));
+  console.log(`[${teamConfig.teamKey}] Collecting members and logs...`);
   const collected = await collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken);
 
   const sheetsClient = new GoogleSheetsClient({
@@ -775,6 +774,7 @@ async function syncTeam(appConfig, teamConfig) {
     collected.scoreResetHour,
   );
 
+  console.log(`[${teamConfig.teamKey}] Writing Google Sheets...`);
   await writeAllSheets(sheetsClient, {
     ...collected,
     questCatalog,

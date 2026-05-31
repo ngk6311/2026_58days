@@ -4,6 +4,10 @@ function base64Url(value) {
   return Buffer.from(value).toString("base64url");
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function toA1Column(colNumber) {
   let value = colNumber;
   let result = "";
@@ -77,33 +81,36 @@ export class GoogleSheetsClient {
   }
 
   async api(path, { method = "GET", query, body } = {}) {
-    const token = await this.getAccessToken();
-    const url = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}${path}`);
+    return this.withRetry(async () => {
+      const token = await this.getAccessToken();
+      const url = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}${path}`);
 
-    if (query) {
-      for (const [key, value] of Object.entries(query)) {
-        url.searchParams.set(key, String(value));
+      if (query) {
+        for (const [key, value] of Object.entries(query)) {
+          url.searchParams.set(key, String(value));
+        }
       }
-    }
 
-    const response = await fetch(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: body ? JSON.stringify(body) : undefined,
+      const response = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw this.buildApiError("Google Sheets API error", response.status, text);
+      }
+
+      if (response.status === 204) {
+        return null;
+      }
+
+      return response.json();
     });
-
-    if (!response.ok) {
-      throw new Error(`Google Sheets API error: ${response.status} ${await response.text()}`);
-    }
-
-    if (response.status === 204) {
-      return null;
-    }
-
-    return response.json();
   }
 
   async getSpreadsheet() {
@@ -130,23 +137,68 @@ export class GoogleSheetsClient {
     return this.api(":batchUpdate", { method: "POST", body });
   }
 
-  async clearValues(range) {
-    const token = await this.getAccessToken();
-    const encodedRange = encodeURIComponent(range);
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${encodedRange}:clear`;
+  buildApiError(prefix, status, text) {
+    const error = new Error(`${prefix}: ${status} ${text}`);
+    error.status = status;
+    error.body = text;
+    return error;
+  }
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({}),
-    });
+  async withRetry(fn, maxAttempts = 4) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        const status = error?.status ?? 0;
+        const retriable = status === 429 || status >= 500;
+        if (!retriable || attempt === maxAttempts) {
+          throw error;
+        }
 
-    if (!response.ok) {
-      throw new Error(`Google Sheets clear error: ${response.status} ${await response.text()}`);
+        const delayMs = status === 429 ? 65000 : 1000 * 2 ** (attempt - 1);
+        console.log(
+          `[GoogleSheets] ${status} on attempt ${attempt}/${maxAttempts}, retrying in ${Math.round(
+            delayMs / 1000,
+          )}s...`,
+        );
+        await sleep(delayMs);
+      }
     }
+    throw lastError;
+  }
+
+  async clearValues(range) {
+    return this.withRetry(async () => {
+      const token = await this.getAccessToken();
+      const encodedRange = encodeURIComponent(range);
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${encodedRange}:clear`;
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw this.buildApiError("Google Sheets clear error", response.status, text);
+      }
+    });
+  }
+
+  async clearValuesBatch(ranges) {
+    if (ranges.length === 0) {
+      return null;
+    }
+    return this.api("/values:batchClear", {
+      method: "POST",
+      body: { ranges },
+    });
   }
 
   async updateValues(range, values) {
@@ -157,6 +209,24 @@ export class GoogleSheetsClient {
         range,
         majorDimension: "ROWS",
         values,
+      },
+    });
+  }
+
+  async updateValuesBatch(data) {
+    if (data.length === 0) {
+      return null;
+    }
+    return this.api("/values:batchUpdate", {
+      method: "POST",
+      query: { valueInputOption: "RAW" },
+      body: {
+        valueInputOption: "RAW",
+        data: data.map((item) => ({
+          range: item.range,
+          majorDimension: "ROWS",
+          values: item.values,
+        })),
       },
     });
   }
@@ -172,5 +242,22 @@ export class GoogleSheetsClient {
     const range = `${title}!A1:${lastColumn}${rows.length}`;
     await this.clearValues(title);
     await this.updateValues(range, rows);
+  }
+
+  async writeSheets(entries) {
+    const clearRanges = [];
+    const data = [];
+
+    for (const [title, rows] of Object.entries(entries)) {
+      const safeRows = rows.length > 0 ? rows : [[]];
+      const colCount = Math.max(...safeRows.map((row) => row.length), 1);
+      const lastColumn = toA1Column(colCount);
+      const range = `${title}!A1:${lastColumn}${safeRows.length}`;
+      clearRanges.push(title);
+      data.push({ range, values: safeRows });
+    }
+
+    await this.clearValuesBatch(clearRanges);
+    await this.updateValuesBatch(data);
   }
 }
