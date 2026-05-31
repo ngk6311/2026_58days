@@ -86,6 +86,13 @@ npm run auth
 python run.py auth
 ```
 
+多小隊模式請改用：
+
+```bash
+python run.py auth --team team7
+python run.py auth --team team2
+```
+
 ## 同步
 
 ```bash
@@ -162,6 +169,8 @@ python run.py all
 - `.env`
 - `credentials.json`
 - `.auth/storage-state.json`
+- `.auth/team7-storage-state.json`
+- `.auth/team2-storage-state.json`
 
 ### 要放進 GitHub Secrets 的項目
 
@@ -176,8 +185,11 @@ python run.py all
 - `FORTUNE_WEEK_START`
 - `FORTUNE_LOG_LIMIT`
 - `FORTUNE_LOOKBACK_DAYS`
+- `FORTUNE_WEB_APP_URL`
 - `GOOGLE_CREDENTIALS_JSON`
 - `PLAYWRIGHT_STORAGE_STATE_JSON`
+- `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7`
+- `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM2`
 
 ### 建議的 secrets 值
 
@@ -200,6 +212,17 @@ python run.py all
 `PLAYWRIGHT_STORAGE_STATE_JSON`
 
 - 直接把 `.auth/storage-state.json` 的完整內容貼進 GitHub Secret
+
+`PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7`
+
+- 直接把 `.auth/team7-storage-state.json` 的完整內容貼進 GitHub Secret
+
+`PLAYWRIGHT_STORAGE_STATE_JSON_TEAM2`
+
+- 直接把 `.auth/team2-storage-state.json` 的完整內容貼進 GitHub Secret
+
+多小隊模式建議至少提供 `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7` 和 `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM2`。
+`PLAYWRIGHT_STORAGE_STATE_JSON` 目前只保留給舊版單隊或作為 `team7` 的備援。
 
 ### 注意
 

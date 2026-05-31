@@ -24,11 +24,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install dependencies
         run: npm ci
-
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
 
       - name: Write runtime secrets
         shell: bash
@@ -44,10 +46,24 @@ jobs:
           FORTUNE_WEEK_START=${{ secrets.FORTUNE_WEEK_START }}
           FORTUNE_LOG_LIMIT=${{ secrets.FORTUNE_LOG_LIMIT }}
           FORTUNE_LOOKBACK_DAYS=${{ secrets.FORTUNE_LOOKBACK_DAYS }}
+          FORTUNE_WEB_APP_URL=${{ secrets.FORTUNE_WEB_APP_URL }}
           GOOGLE_CREDENTIALS_PATH=./credentials.json
           EOF
           printf '%s' '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
-          printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' > .auth/storage-state.json
+
+          if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' ]]; then
+            printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' > .auth/storage-state.json
+          fi
+
+          if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7 }}' ]]; then
+            printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7 }}' > .auth/team7-storage-state.json
+          elif [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' ]]; then
+            printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' > .auth/team7-storage-state.json
+          fi
+
+          if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM2 }}' ]]; then
+            printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM2 }}' > .auth/team2-storage-state.json
+          fi
 
       - name: Run sync
-        run: npm run sync
+        run: python run.py sync
