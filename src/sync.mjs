@@ -123,6 +123,8 @@ const WEEKLY_DASHBOARD_HEADERS = [
   "參加心成活動 (2次)",
 ];
 
+const BRIGADE_WEEKLY_DASHBOARD_HEADERS = ["小組", ...WEEKLY_DASHBOARD_HEADERS];
+
 const CAMPAIGN_WEEKS = [
   { weekLabel: "第1週", start: "2026-05-25", end: "2026-05-31", cycle: 1 },
   { weekLabel: "第2週", start: "2026-06-01", end: "2026-06-07", cycle: 1 },
@@ -283,8 +285,9 @@ function buildLogRow(log, member, fetchedAt, logicalDate) {
 
 async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken) {
   const apiBase = `${teamConfig.apiBaseUrl}/api/v1/schools/${schoolId}/fortune_game`;
+  const expectsBrigadeRole = teamConfig.roleType === "brigade";
   const [teamData, publicConfig] = await Promise.all([
-    getJson(`${apiBase}/my-team/members`, authToken),
+    getJsonOptional(`${apiBase}/my-team/members`, authToken, [401, 403, 404, 409]),
     getJson(`${apiBase}/config/public`, authToken),
   ]);
   const brigadeData = await getJsonOptional(`${apiBase}/my-brigade`, authToken);
@@ -296,16 +299,22 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
   const logIds = new Set();
 
   const currentTeamId = teamData?.team?.id ?? null;
-  const isBrigadeCaptain = brigadeData?.viewer_role === "brigade_captain";
-  const notes = [isBrigadeCaptain ? "brigade captain" : "team leader/member"];
+  const hasBrigadeAccess = brigadeData?.viewer_role === "brigade_captain";
+  const useBrigadeMode = expectsBrigadeRole || hasBrigadeAccess;
+
+  if (expectsBrigadeRole && !brigadeData) {
+    throw new Error(`Expected brigade access for ${teamConfig.teamKey}, but /my-brigade is unavailable.`);
+  }
+
+  const notes = [useBrigadeMode ? "brigade captain" : "team leader/member"];
 
   const teamsToSync = [];
-  if (isBrigadeCaptain) {
+  if (useBrigadeMode) {
     for (const team of brigadeData?.teams ?? []) {
       teamsToSync.push({
         teamId: team.team_id,
         teamName: team.team_name,
-        isCurrentTeam: team.team_id === currentTeamId,
+        isCurrentTeam: !expectsBrigadeRole && currentTeamId ? team.team_id === currentTeamId : false,
       });
     }
   } else if (teamData?.team) {
@@ -324,7 +333,7 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
     );
   }
 
-  if (isBrigadeCaptain) {
+  if (useBrigadeMode) {
     for (const team of teamsToSync) {
       if (teamMemberMap.has(team.teamId)) {
         continue;
@@ -346,7 +355,7 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
 
     for (const member of teamMembers) {
       const scoreLogUrl =
-        team.isCurrentTeam || !isBrigadeCaptain
+        team.isCurrentTeam || !useBrigadeMode
           ? `${apiBase}/my-team/members/${member.studentId}/score-logs?limit=${appConfig.logLimit}`
           : `${apiBase}/my-brigade/teams/${team.teamId}/members/${member.studentId}/score-logs?limit=${appConfig.logLimit}`;
       const logs = await getJson(scoreLogUrl, authToken);
@@ -478,6 +487,7 @@ function getCampaignWeekInfo(config, scoreResetHour) {
 }
 
 function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreResetHour) {
+  const isBrigadeView = teamConfig.roleType === "brigade";
   const campaign = getCampaignWeekInfo(appConfig, scoreResetHour);
   const weekDates = campaign.weekDates;
   const monday = campaign.currentWeekStart;
@@ -537,11 +547,17 @@ function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreRese
     ["主題親證週期", `${campaign.themeCycleLabel} ${campaign.themeCycleStart} ~ ${campaign.themeCycleEnd}`],
     ["說明", "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，該輪完成 1 次即打勾。"],
     [],
-    WEEKLY_DASHBOARD_HEADERS,
+    isBrigadeView ? BRIGADE_WEEKLY_DASHBOARD_HEADERS : WEEKLY_DASHBOARD_HEADERS,
   ];
 
   const memberRows = [...members]
     .sort((a, b) => {
+      if (isBrigadeView) {
+        const teamCompare = a.teamName.localeCompare(b.teamName, "zh-Hant");
+        if (teamCompare !== 0) {
+          return teamCompare;
+        }
+      }
       if (a.isTeamCaptain !== b.isTeamCaptain) {
         return a.isTeamCaptain ? -1 : 1;
       }
@@ -574,7 +590,9 @@ function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreRese
         return "";
       });
 
-      return [member.memberName, ...dailyCells, ...weeklyTaskChecks];
+      return isBrigadeView
+        ? [member.teamName, member.memberName, ...dailyCells, ...weeklyTaskChecks]
+        : [member.memberName, ...dailyCells, ...weeklyTaskChecks];
     });
 
   return [...metaRows, ...memberRows];

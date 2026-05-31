@@ -106,6 +106,7 @@ function loadBaseConfig() {
 function normalizeTeamConfig(raw, baseConfig) {
   const teamKey = raw.team_key || raw.teamKey;
   const sheetId = raw.sheet_id || raw.sheetId;
+  const roleType = (raw.role_type || raw.roleType || "team").toLowerCase();
 
   if (!teamKey) {
     throw new Error("Each team config must include team_key.");
@@ -113,10 +114,14 @@ function normalizeTeamConfig(raw, baseConfig) {
   if (!sheetId) {
     throw new Error(`Team ${teamKey} is missing sheet_id.`);
   }
+  if (!["team", "brigade"].includes(roleType)) {
+    throw new Error(`Team ${teamKey} has invalid role_type: ${roleType}`);
+  }
 
   return {
     teamKey,
     teamName: raw.team_name || raw.teamName || teamKey,
+    roleType,
     sheetId,
     partnersUrl: raw.partners_url || raw.partnersUrl || baseConfig.defaultPartnersUrl,
     schoolId: raw.school_id || raw.schoolId || baseConfig.defaultSchoolId,
@@ -142,6 +147,7 @@ function loadTeamsConfig(baseConfig) {
       {
         team_key: "default",
         team_name: "default",
+        role_type: "team",
         sheet_id: requireEnv("FORTUNE_SHEET_ID"),
         partners_url: baseConfig.defaultPartnersUrl,
         school_id: baseConfig.defaultSchoolId,
