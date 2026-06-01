@@ -122,6 +122,11 @@ const WEEKLY_DASHBOARD_HEADERS = [
   "蓋婭的召喚 (1次)",
   "親證分享 (1次)",
   "參加心成活動 (2次)",
+  "實體小組定聚 (2次)",
+  "巔峰取經試煉 (1次)",
+  "解圓夢計畫 (1次)",
+  "親證班課後課 (1次)",
+  "參加結業典禮 (1次)",
 ];
 
 const BRIGADE_WEEKLY_DASHBOARD_HEADERS = ["小組", ...WEEKLY_DASHBOARD_HEADERS];
@@ -137,6 +142,10 @@ const CAMPAIGN_WEEKS = [
   { weekLabel: "第8週", start: "2026-07-13", end: "2026-07-19", cycle: 4 },
   { weekLabel: "第9週", start: "2026-07-20", end: "2026-07-21", cycle: 5 },
 ];
+
+const SPECIAL_EVENT_START = "2026-06-01";
+const DAILY_TASK_COLUMN_COUNT = 7;
+const LEGACY_WEEKLY_TASK_COLUMN_COUNT = 7;
 
 function requireStorageState(storageStatePath) {
   const filePath = path.resolve(storageStatePath);
@@ -524,6 +533,20 @@ function getCampaignWeekInfo(config, scoreResetHour) {
   };
 }
 
+function countTaskMatches(logs, task) {
+  const matchedLogs = logs.filter((log) => task.match(log.questTitle));
+  if (task.countMode === "unique-month") {
+    const monthKeys = new Set(
+      matchedLogs.map((log) => {
+        const dateKey = log.weeklyLogicalDate ?? log.logicalDate;
+        return dateKey.slice(0, 7);
+      }),
+    );
+    return monthKeys.size;
+  }
+  return matchedLogs.length;
+}
+
 function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign) {
   const isBrigadeView = teamConfig.roleType === "brigade";
   const weekDates = campaign.weekDates;
@@ -572,6 +595,43 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
       match: (questTitle) => questTitle === "參加心成活動",
       displayPartialCount: true,
     },
+    {
+      title: "實體小組定聚 (2次)",
+      requiredCount: 2,
+      match: (questTitle) => questTitle.includes("實體小組定聚"),
+      rangeStart: SPECIAL_EVENT_START,
+      rangeEnd: campaign.currentWeekEnd,
+      countMode: "unique-month",
+      displayPartialCount: true,
+    },
+    {
+      title: "巔峰取經試煉 (1次)",
+      requiredCount: 1,
+      match: (questTitle) => questTitle.includes("巔峰取經試煉"),
+      rangeStart: SPECIAL_EVENT_START,
+      rangeEnd: campaign.currentWeekEnd,
+    },
+    {
+      title: "解圓夢計畫 (1次)",
+      requiredCount: 1,
+      match: (questTitle) => questTitle.includes("解圓夢計畫"),
+      rangeStart: SPECIAL_EVENT_START,
+      rangeEnd: campaign.currentWeekEnd,
+    },
+    {
+      title: "親證班課後課 (1次)",
+      requiredCount: 1,
+      match: (questTitle) => questTitle.includes("親證班課後課"),
+      rangeStart: SPECIAL_EVENT_START,
+      rangeEnd: campaign.currentWeekEnd,
+    },
+    {
+      title: "參加結業典禮 (1次)",
+      requiredCount: 1,
+      match: (questTitle) => questTitle.includes("參加結業典禮"),
+      rangeStart: SPECIAL_EVENT_START,
+      rangeEnd: campaign.currentWeekEnd,
+    },
   ];
 
   const metaRows = [
@@ -582,7 +642,10 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
       teamConfig.webAppUrl ? `=HYPERLINK("${teamConfig.webAppUrl}","手機點我同步")` : "",
     ],
     ["主題親證週期", `${campaign.themeCycleLabel} ${campaign.themeCycleStart} ~ ${campaign.themeCycleEnd}`],
-    ["說明", "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，該輪完成 1 次即打勾。"],
+    [
+      "說明",
+      "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，該輪完成 1 次即打勾。實體小組定聚自 2026-06-01 起按月份累計，6 月與 7 月各最多計 1 次；一次性活動自 2026-06-01 起累計，完成後後續週次會持續顯示。",
+    ],
     [],
     isBrigadeView ? BRIGADE_WEEKLY_DASHBOARD_HEADERS : WEEKLY_DASHBOARD_HEADERS,
   ];
@@ -624,7 +687,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
                 (log.weeklyLogicalDate ?? log.logicalDate) <= task.rangeEnd,
             )
           : memberWeekLogs;
-        const matchCount = sourceLogs.filter((log) => task.match(log.questTitle)).length;
+        const matchCount = countTaskMatches(sourceLogs, task);
         if (matchCount >= task.requiredCount) {
           return "✓";
         }
@@ -697,6 +760,77 @@ function buildWeeklyHistoryRows(teamConfig, appConfig, members, rawLogs, scoreRe
   }
 
   return rows;
+}
+
+function pushWeeklyHeaderColorRequests(requests, sheetId, rowIndex, colCount, hasBrigadeColumn) {
+  const memberColumnIndex = hasBrigadeColumn ? 1 : 0;
+  const dailyStartColumnIndex = memberColumnIndex + 1;
+  const dailyEndColumnIndex = Math.min(dailyStartColumnIndex + DAILY_TASK_COLUMN_COUNT, colCount);
+  const legacyWeeklyEndColumnIndex = Math.min(dailyEndColumnIndex + LEGACY_WEEKLY_TASK_COLUMN_COUNT, colCount);
+  const newWeeklyStartColumnIndex = legacyWeeklyEndColumnIndex;
+
+  requests.push({
+    repeatCell: {
+      range: {
+        sheetId,
+        startRowIndex: rowIndex,
+        endRowIndex: rowIndex + 1,
+        startColumnIndex: 0,
+        endColumnIndex: colCount,
+      },
+      cell: {
+        userEnteredFormat: {
+          backgroundColor: { red: 0.17, green: 0.34, blue: 0.55 },
+          textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+          horizontalAlignment: "CENTER",
+          verticalAlignment: "MIDDLE",
+          wrapStrategy: "WRAP",
+        },
+      },
+      fields:
+        "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)",
+    },
+  });
+
+  requests.push({
+    repeatCell: {
+      range: {
+        sheetId,
+        startRowIndex: rowIndex,
+        endRowIndex: rowIndex + 1,
+        startColumnIndex: dailyStartColumnIndex,
+        endColumnIndex: dailyEndColumnIndex,
+      },
+      cell: {
+        userEnteredFormat: {
+          backgroundColor: { red: 0.26, green: 0.56, blue: 0.33 },
+          textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+        },
+      },
+      fields: "userEnteredFormat(backgroundColor,textFormat)",
+    },
+  });
+
+  if (newWeeklyStartColumnIndex < colCount) {
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: rowIndex,
+          endRowIndex: rowIndex + 1,
+          startColumnIndex: newWeeklyStartColumnIndex,
+          endColumnIndex: colCount,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 0.82, green: 0.55, blue: 0.16 },
+            textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+          },
+        },
+        fields: "userEnteredFormat(backgroundColor,textFormat)",
+      },
+    });
+  }
 }
 
 async function applyWeeklyHistoryFormatting(sheetsClient, rows) {
@@ -776,25 +910,7 @@ async function applyWeeklyHistoryFormatting(sheetsClient, rows) {
 
     const secondCell = String(row?.[1] ?? "");
     if (firstCell === "隊員" || secondCell === "隊員") {
-      requests.push({
-        repeatCell: {
-          range: {
-            sheetId,
-            startRowIndex: rowIndex,
-            endRowIndex: rowIndex + 1,
-            startColumnIndex: 0,
-            endColumnIndex: colCount,
-          },
-          cell: {
-            userEnteredFormat: {
-              backgroundColor: { red: 0.15, green: 0.38, blue: 0.22 },
-              textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
-              horizontalAlignment: "CENTER",
-            },
-          },
-          fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
-        },
-      });
+      pushWeeklyHeaderColorRequests(requests, sheetId, rowIndex, colCount, secondCell === "隊員");
     }
   }
 
@@ -836,6 +952,169 @@ async function applyWeeklyHistoryFormatting(sheetsClient, rows) {
           {
             sheetId,
             startRowIndex: 0,
+            endRowIndex: rowCount,
+            startColumnIndex: 0,
+            endColumnIndex: colCount,
+          },
+        ],
+        booleanRule: {
+          condition: {
+            type: "TEXT_EQ",
+            values: [{ userEnteredValue: "✓" }],
+          },
+          format: {
+            backgroundColor: { red: 0.84, green: 0.93, blue: 0.82 },
+            textFormat: {
+              bold: true,
+              foregroundColor: { red: 0.11, green: 0.36, blue: 0.16 },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  await sheetsClient.batchUpdate({ requests });
+}
+
+async function applyWeeklyDashboardFormatting(sheetsClient, rows) {
+  const sheet = await sheetsClient.getSheetByTitle("weekly_dashboard");
+  if (!sheet) {
+    return;
+  }
+
+  const sheetId = sheet.properties.sheetId;
+  const rowCount = rows.length;
+  const colCount = Math.max(...rows.map((row) => row.length), 1);
+  const existingRules = sheet.conditionalFormats?.length ?? 0;
+  const headerRowIndex = 4;
+  const hasBrigadeColumn = rows[headerRowIndex]?.[0] === "小組";
+  const memberColumnCount = hasBrigadeColumn ? 2 : 1;
+  const dailyStartColumnIndex = memberColumnCount;
+  const dailyEndColumnIndex = Math.min(dailyStartColumnIndex + DAILY_TASK_COLUMN_COUNT, colCount);
+  const legacyWeeklyStartColumnIndex = dailyEndColumnIndex;
+  const legacyWeeklyEndColumnIndex = Math.min(
+    legacyWeeklyStartColumnIndex + LEGACY_WEEKLY_TASK_COLUMN_COUNT,
+    colCount,
+  );
+  const newWeeklyStartColumnIndex = legacyWeeklyEndColumnIndex;
+
+  const requests = [
+    {
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: 0,
+          endRowIndex: rowCount,
+          startColumnIndex: 0,
+          endColumnIndex: colCount,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 1, green: 1, blue: 1 },
+            horizontalAlignment: "CENTER",
+            verticalAlignment: "MIDDLE",
+            textFormat: { fontSize: 10 },
+          },
+        },
+        fields: "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)",
+      },
+    },
+    {
+      updateSheetProperties: {
+        properties: {
+          sheetId,
+          gridProperties: { frozenRowCount: 5, frozenColumnCount: hasBrigadeColumn ? 2 : 1 },
+        },
+        fields: "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+      },
+    },
+  ];
+
+  for (let index = existingRules - 1; index >= 0; index -= 1) {
+    requests.push({
+      deleteConditionalFormatRule: {
+        sheetId,
+        index,
+      },
+    });
+  }
+
+  pushWeeklyHeaderColorRequests(requests, sheetId, headerRowIndex, colCount, hasBrigadeColumn);
+
+  for (let rowIndex = 0; rowIndex < Math.min(headerRowIndex, rowCount); rowIndex += 1) {
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: rowIndex,
+          endRowIndex: rowIndex + 1,
+          startColumnIndex: 0,
+          endColumnIndex: colCount,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 0.97, green: 0.96, blue: 0.92 },
+            horizontalAlignment: rowIndex === 2 ? "LEFT" : "CENTER",
+            wrapStrategy: "WRAP",
+            textFormat: { fontSize: rowIndex === 0 ? 11 : 10, bold: rowIndex < 2 },
+          },
+        },
+        fields: "userEnteredFormat(backgroundColor,horizontalAlignment,wrapStrategy,textFormat)",
+      },
+    });
+  }
+
+  requests.push(
+    {
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: 0,
+          endIndex: memberColumnCount,
+        },
+        properties: { pixelSize: 110 },
+        fields: "pixelSize",
+      },
+    },
+    {
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: dailyStartColumnIndex,
+          endIndex: Math.min(dailyEndColumnIndex, colCount),
+        },
+        properties: { pixelSize: 72 },
+        fields: "pixelSize",
+      },
+    },
+  );
+
+  if (newWeeklyStartColumnIndex < colCount) {
+    requests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: newWeeklyStartColumnIndex,
+          endIndex: colCount,
+        },
+        properties: { pixelSize: 120 },
+        fields: "pixelSize",
+      },
+    });
+  }
+
+  requests.push({
+    addConditionalFormatRule: {
+      index: 0,
+      rule: {
+        ranges: [
+          {
+            sheetId,
+            startRowIndex: headerRowIndex + 1,
             endRowIndex: rowCount,
             startColumnIndex: 0,
             endColumnIndex: colCount,
@@ -1036,6 +1315,7 @@ async function writeAllSheets(sheetsClient, payload) {
     ],
   });
 
+  await applyWeeklyDashboardFormatting(sheetsClient, weeklyDashboardRows);
   await applyWeeklyHistoryFormatting(sheetsClient, weeklyHistoryRows);
 }
 
