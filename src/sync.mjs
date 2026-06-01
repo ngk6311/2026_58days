@@ -614,7 +614,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
     {
       title: "解圓夢計畫 (1次)",
       requiredCount: 1,
-      match: (questTitle) => questTitle.includes("解圓夢計畫"),
+      match: (questTitle) => questTitle.includes("解圓夢計畫") || questTitle.includes("解圓夢計劃"),
       rangeStart: SPECIAL_EVENT_START,
       rangeEnd: campaign.currentWeekEnd,
     },
