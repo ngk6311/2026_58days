@@ -547,6 +547,10 @@ function countTaskMatches(logs, task) {
   return matchedLogs.length;
 }
 
+function stripCountSuffix(title) {
+  return title.replace(/\s*\(\d+次\)$/, "");
+}
+
 function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign) {
   const isBrigadeView = teamConfig.roleType === "brigade";
   const weekDates = campaign.weekDates;
@@ -598,7 +602,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
     {
       title: "實體小組定聚 (2次)",
       requiredCount: 2,
-      match: (questTitle) => questTitle.includes("實體小組定聚"),
+      match: (questTitle) => questTitle.includes(stripCountSuffix("實體小組定聚 (2次)")),
       rangeStart: SPECIAL_EVENT_START,
       rangeEnd: campaign.currentWeekEnd,
       countMode: "unique-month",
@@ -607,28 +611,29 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
     {
       title: "巔峰取經試煉 (1次)",
       requiredCount: 1,
-      match: (questTitle) => questTitle.includes("巔峰取經試煉"),
+      match: (questTitle) => questTitle.includes(stripCountSuffix("巔峰取經試煉 (1次)")),
       rangeStart: SPECIAL_EVENT_START,
       rangeEnd: campaign.currentWeekEnd,
     },
     {
       title: "解圓夢計畫 (1次)",
       requiredCount: 1,
-      match: (questTitle) => questTitle.includes("解圓夢計畫") || questTitle.includes("解圓夢計劃"),
+      match: (questTitle) =>
+        questTitle.includes(stripCountSuffix("解圓夢計畫 (1次)")) || questTitle.includes("解圓夢計劃"),
       rangeStart: SPECIAL_EVENT_START,
       rangeEnd: campaign.currentWeekEnd,
     },
     {
       title: "親證班課後課 (1次)",
       requiredCount: 1,
-      match: (questTitle) => questTitle.includes("親證班課後課"),
+      match: (questTitle) => questTitle.includes(stripCountSuffix("親證班課後課 (1次)")),
       rangeStart: SPECIAL_EVENT_START,
       rangeEnd: campaign.currentWeekEnd,
     },
     {
       title: "參加結業典禮 (1次)",
       requiredCount: 1,
-      match: (questTitle) => questTitle.includes("參加結業典禮"),
+      match: (questTitle) => questTitle.includes(stripCountSuffix("參加結業典禮 (1次)")),
       rangeStart: SPECIAL_EVENT_START,
       rangeEnd: campaign.currentWeekEnd,
     },
