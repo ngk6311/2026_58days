@@ -140,9 +140,17 @@ def cmd_init() -> None:
             "FORTUNE_LOG_LIMIT",
             defaults.get("FORTUNE_LOG_LIMIT", "100"),
         ),
+        "FORTUNE_LOG_CONCURRENCY": current.get(
+            "FORTUNE_LOG_CONCURRENCY",
+            defaults.get("FORTUNE_LOG_CONCURRENCY", "8"),
+        ),
         "FORTUNE_LOOKBACK_DAYS": current.get(
             "FORTUNE_LOOKBACK_DAYS",
             defaults.get("FORTUNE_LOOKBACK_DAYS", "28"),
+        ),
+        "FORTUNE_SKIP_FORMATTING": current.get(
+            "FORTUNE_SKIP_FORMATTING",
+            defaults.get("FORTUNE_SKIP_FORMATTING", "false"),
         ),
         "GOOGLE_CREDENTIALS_PATH": current.get(
             "GOOGLE_CREDENTIALS_PATH",

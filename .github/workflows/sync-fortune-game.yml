@@ -45,7 +45,9 @@ jobs:
           FORTUNE_SCORE_RESET_HOUR=${{ secrets.FORTUNE_SCORE_RESET_HOUR }}
           FORTUNE_WEEK_START=${{ secrets.FORTUNE_WEEK_START }}
           FORTUNE_LOG_LIMIT=${{ secrets.FORTUNE_LOG_LIMIT }}
+          FORTUNE_LOG_CONCURRENCY=${{ secrets.FORTUNE_LOG_CONCURRENCY }}
           FORTUNE_LOOKBACK_DAYS=${{ secrets.FORTUNE_LOOKBACK_DAYS }}
+          FORTUNE_SKIP_FORMATTING=${{ secrets.FORTUNE_SKIP_FORMATTING }}
           FORTUNE_WEB_APP_URL=${{ secrets.FORTUNE_WEB_APP_URL }}
           GOOGLE_CREDENTIALS_PATH=./credentials.json
           EOF

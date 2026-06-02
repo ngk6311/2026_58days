@@ -46,7 +46,9 @@ python run.py sync
 - `FORTUNE_SCORE_RESET_HOUR`: 日結算小時，預設 `0`
 - `FORTUNE_WEEK_START`: 週起始日，`1` 代表週一
 - `FORTUNE_LOG_LIMIT`: 每位成員抓取的 score logs 筆數
+- `FORTUNE_LOG_CONCURRENCY`: 同時抓取幾位成員的 score logs，預設 `8`
 - `FORTUNE_LOOKBACK_DAYS`: daily/weekly 報表往回計算幾天
+- `FORTUNE_SKIP_FORMATTING`: 設為 `true` 時只寫資料、不重刷 `weekly_dashboard` / `weekly_history` 格式，預設 `false`
 - `GOOGLE_CREDENTIALS_PATH`: service account JSON 路徑，預設 `./credentials.json`
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
 - `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
@@ -184,7 +186,9 @@ python run.py all
 - `FORTUNE_SCORE_RESET_HOUR`
 - `FORTUNE_WEEK_START`
 - `FORTUNE_LOG_LIMIT`
+- `FORTUNE_LOG_CONCURRENCY`
 - `FORTUNE_LOOKBACK_DAYS`
+- `FORTUNE_SKIP_FORMATTING`
 - `FORTUNE_WEB_APP_URL`
 - `GOOGLE_CREDENTIALS_JSON`
 - `PLAYWRIGHT_STORAGE_STATE_JSON`
@@ -201,7 +205,9 @@ python run.py all
 - `FORTUNE_SCORE_RESET_HOUR`: `0`
 - `FORTUNE_WEEK_START`: `1`
 - `FORTUNE_LOG_LIMIT`: `100`
+- `FORTUNE_LOG_CONCURRENCY`: `8`
 - `FORTUNE_LOOKBACK_DAYS`: `28`
+- `FORTUNE_SKIP_FORMATTING`: `false`
 
 ### JSON secrets 怎麼準備
 

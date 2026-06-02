@@ -52,6 +52,23 @@ function requireEnv(key) {
   return value;
 }
 
+function getPositiveIntEnv(key, fallback) {
+  const raw = getEnv(key, String(fallback));
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 1) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+function getBooleanEnv(key, fallback = false) {
+  const raw = getEnv(key);
+  if (raw === undefined) {
+    return fallback;
+  }
+  return ["1", "true", "yes", "y", "on"].includes(String(raw).trim().toLowerCase());
+}
+
 function loadGoogleCredentials() {
   const credentialsPath = getEnv("GOOGLE_CREDENTIALS_PATH", "./credentials.json");
   const resolvedPath = path.resolve(credentialsPath);
@@ -92,8 +109,10 @@ function loadBaseConfig() {
     timezone: getEnv("FORTUNE_TIMEZONE", "Asia/Taipei"),
     scoreResetHour: Number(getEnv("FORTUNE_SCORE_RESET_HOUR", "0")),
     weekStart: Number(getEnv("FORTUNE_WEEK_START", "1")),
-    logLimit: Number(getEnv("FORTUNE_LOG_LIMIT", "100")),
-    lookbackDays: Number(getEnv("FORTUNE_LOOKBACK_DAYS", "28")),
+    logLimit: getPositiveIntEnv("FORTUNE_LOG_LIMIT", 100),
+    logConcurrency: getPositiveIntEnv("FORTUNE_LOG_CONCURRENCY", 8),
+    lookbackDays: getPositiveIntEnv("FORTUNE_LOOKBACK_DAYS", 28),
+    skipFormatting: getBooleanEnv("FORTUNE_SKIP_FORMATTING", false),
     google: {
       clientEmail: googleCredentials.clientEmail,
       privateKey: googleCredentials.privateKey,

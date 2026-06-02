@@ -260,6 +260,23 @@ async function getJsonOptional(url, authToken, allowedStatuses = [401, 403, 404]
   throw new Error(`Request failed: ${response.status} ${response.statusText} (${url})`);
 }
 
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  const workerCount = Math.min(Math.max(limit, 1), items.length);
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return results;
+}
+
 function normalizeMember(team, member) {
   return {
     teamId: team.id ?? team.team_id ?? "",
@@ -398,18 +415,23 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
     const teamMembers = teamMemberMap.get(team.teamId) ?? [];
     members.push(...teamMembers);
 
-    for (const member of teamMembers) {
+    const memberLogRows = await mapWithConcurrency(teamMembers, appConfig.logConcurrency, async (member) => {
       const scoreLogUrl =
         team.isCurrentTeam || !useBrigadeMode
           ? `${apiBase}/my-team/members/${member.studentId}/score-logs?limit=${appConfig.logLimit}`
           : `${apiBase}/my-brigade/teams/${team.teamId}/members/${member.studentId}/score-logs?limit=${appConfig.logLimit}`;
       const logs = await getJson(scoreLogUrl, authToken);
 
-      for (const log of logs ?? []) {
+      return (logs ?? []).map((log) => {
         const logicalDate = log.logged_at
           ? zonedDateKey(new Date(log.logged_at), appConfig.timezone, scoreResetHour)
           : "";
-        const row = buildLogRow(log, member, fetchedAt, logicalDate);
+        return buildLogRow(log, member, fetchedAt, logicalDate);
+      });
+    });
+
+    for (const rows of memberLogRows) {
+      for (const row of rows) {
         if (!logIds.has(row.logId)) {
           logIds.add(row.logId);
           rawLogs.push(row);
@@ -1236,6 +1258,7 @@ async function writeAllSheets(sheetsClient, payload) {
     scope,
     scoreResetHour,
     timezone,
+    skipFormatting,
   } = payload;
   const syncedAt = formatDateTime(new Date(), timezone);
 
@@ -1320,8 +1343,12 @@ async function writeAllSheets(sheetsClient, payload) {
     ],
   });
 
-  await applyWeeklyDashboardFormatting(sheetsClient, weeklyDashboardRows);
-  await applyWeeklyHistoryFormatting(sheetsClient, weeklyHistoryRows);
+  if (skipFormatting) {
+    console.log("Skipping Google Sheets formatting because FORTUNE_SKIP_FORMATTING is enabled.");
+  } else {
+    await applyWeeklyDashboardFormatting(sheetsClient, weeklyDashboardRows);
+    await applyWeeklyHistoryFormatting(sheetsClient, weeklyHistoryRows);
+  }
 }
 
 async function syncTeam(appConfig, teamConfig) {
@@ -1370,6 +1397,7 @@ async function syncTeam(appConfig, teamConfig) {
     weeklyDashboardRows,
     weeklyHistoryRows,
     timezone: appConfig.timezone,
+    skipFormatting: appConfig.skipFormatting,
   });
 
   console.log(`[${teamConfig.teamKey}] Synced ${collected.members.length} members and ${collected.rawLogs.length} logs.`);
