@@ -51,6 +51,10 @@ jobs:
           EOF
           printf '%s' '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
 
+          if [[ -n '${{ secrets.TEAMS_CONFIG_JSON }}' ]]; then
+            printf '%s' '${{ secrets.TEAMS_CONFIG_JSON }}' > teams.local.json
+          fi
+
           if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' ]]; then
             printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' > .auth/storage-state.json
           fi

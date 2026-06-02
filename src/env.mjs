@@ -3,6 +3,7 @@ import path from "node:path";
 
 const ENV_PATH = path.resolve(".env");
 const TEAMS_CONFIG_PATH = path.resolve("teams.json");
+const TEAMS_LOCAL_CONFIG_PATH = path.resolve("teams.local.json");
 
 function parseEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -103,6 +104,55 @@ function loadBaseConfig() {
   };
 }
 
+function parseJsonArrayFile(filePath, description) {
+  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  if (!Array.isArray(raw)) {
+    throw new Error(`${description} must be an array.`);
+  }
+  return raw;
+}
+
+function parseJsonArrayString(rawText, description) {
+  const raw = JSON.parse(rawText);
+  if (!Array.isArray(raw)) {
+    throw new Error(`${description} must be an array.`);
+  }
+  return raw;
+}
+
+function getTeamKey(raw) {
+  return raw?.team_key || raw?.teamKey || null;
+}
+
+function mergeTeamConfigs(baseItems, overrideItems) {
+  const merged = [...baseItems];
+  const indexByKey = new Map();
+
+  for (let index = 0; index < merged.length; index += 1) {
+    const teamKey = getTeamKey(merged[index]);
+    if (teamKey) {
+      indexByKey.set(teamKey, index);
+    }
+  }
+
+  for (const item of overrideItems) {
+    const teamKey = getTeamKey(item);
+    if (!teamKey) {
+      throw new Error("Each team config must include team_key.");
+    }
+
+    if (indexByKey.has(teamKey)) {
+      const existingIndex = indexByKey.get(teamKey);
+      merged[existingIndex] = { ...merged[existingIndex], ...item };
+    } else {
+      indexByKey.set(teamKey, merged.length);
+      merged.push(item);
+    }
+  }
+
+  return merged;
+}
+
 function normalizeTeamConfig(raw, baseConfig) {
   const teamKey = raw.team_key || raw.teamKey;
   const sheetId = raw.sheet_id || raw.sheetId;
@@ -112,7 +162,9 @@ function normalizeTeamConfig(raw, baseConfig) {
     throw new Error("Each team config must include team_key.");
   }
   if (!sheetId) {
-    throw new Error(`Team ${teamKey} is missing sheet_id.`);
+    throw new Error(
+      `Team ${teamKey} is missing sheet_id. Add it in teams.local.json or provide a TEAMS_CONFIG_JSON override.`,
+    );
   }
   if (!["team", "brigade"].includes(roleType)) {
     throw new Error(`Team ${teamKey} has invalid role_type: ${roleType}`);
@@ -134,12 +186,23 @@ function normalizeTeamConfig(raw, baseConfig) {
 }
 
 function loadTeamsConfig(baseConfig) {
+  let rawTeams = [];
+
   if (fs.existsSync(TEAMS_CONFIG_PATH)) {
-    const raw = JSON.parse(fs.readFileSync(TEAMS_CONFIG_PATH, "utf8"));
-    if (!Array.isArray(raw)) {
-      throw new Error("teams.json must be an array.");
-    }
-    return raw.map((item) => normalizeTeamConfig(item, baseConfig)).filter((item) => item.enabled);
+    rawTeams = parseJsonArrayFile(TEAMS_CONFIG_PATH, "teams.json");
+  }
+
+  if (fs.existsSync(TEAMS_LOCAL_CONFIG_PATH)) {
+    rawTeams = mergeTeamConfigs(rawTeams, parseJsonArrayFile(TEAMS_LOCAL_CONFIG_PATH, "teams.local.json"));
+  }
+
+  const teamsConfigJson = getEnv("TEAMS_CONFIG_JSON", "");
+  if (teamsConfigJson) {
+    rawTeams = mergeTeamConfigs(rawTeams, parseJsonArrayString(teamsConfigJson, "TEAMS_CONFIG_JSON"));
+  }
+
+  if (rawTeams.length > 0) {
+    return rawTeams.map((item) => normalizeTeamConfig(item, baseConfig)).filter((item) => item.enabled);
   }
 
   return [

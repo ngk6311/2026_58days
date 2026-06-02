@@ -1,0 +1,38 @@
+[
+  {
+    "team_key": "team7",
+    "sheet_id": "your-sheet-id",
+    "school_id": "your-school-id",
+    "web_app_url": "https://script.google.com/macros/s/your-web-app-id/exec"
+  },
+  {
+    "team_key": "team2",
+    "sheet_id": "your-sheet-id",
+    "school_id": "your-school-id"
+  },
+  {
+    "team_key": "team3",
+    "sheet_id": "your-sheet-id",
+    "school_id": "your-school-id"
+  },
+  {
+    "team_key": "team4",
+    "sheet_id": "your-sheet-id",
+    "school_id": "your-school-id"
+  },
+  {
+    "team_key": "team5",
+    "sheet_id": "your-sheet-id",
+    "school_id": "your-school-id"
+  },
+  {
+    "team_key": "team9",
+    "sheet_id": "your-sheet-id",
+    "school_id": "your-school-id"
+  },
+  {
+    "team_key": "brigade1",
+    "sheet_id": "your-sheet-id",
+    "school_id": "your-school-id"
+  }
+]
