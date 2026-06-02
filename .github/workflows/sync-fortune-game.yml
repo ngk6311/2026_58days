@@ -73,6 +73,14 @@ jobs:
             printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM4 }}' > .auth/team4-storage-state.json
           fi
 
+          if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM5 }}' ]]; then
+            printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM5 }}' > .auth/team5-storage-state.json
+          fi
+
+          if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM9 }}' ]]; then
+            printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM9 }}' > .auth/team9-storage-state.json
+          fi
+
           if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_BRIGADE1 }}' ]]; then
             printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_BRIGADE1 }}' > .auth/brigade1-storage-state.json
           fi
@@ -115,6 +123,24 @@ jobs:
               echo "team4 storage state: OK"
             else
               echo "::error::Missing .auth/team4-storage-state.json. Check GitHub secret PLAYWRIGHT_STORAGE_STATE_JSON_TEAM4 and make sure it is saved under Repository secrets."
+              exit 1
+            fi
+          fi
+
+          if grep -q '"team_key"[[:space:]]*:[[:space:]]*"team5"' teams.json; then
+            if [[ -f .auth/team5-storage-state.json ]]; then
+              echo "team5 storage state: OK"
+            else
+              echo "::error::Missing .auth/team5-storage-state.json. Check GitHub secret PLAYWRIGHT_STORAGE_STATE_JSON_TEAM5 and make sure it is saved under Repository secrets."
+              exit 1
+            fi
+          fi
+
+          if grep -q '"team_key"[[:space:]]*:[[:space:]]*"team9"' teams.json; then
+            if [[ -f .auth/team9-storage-state.json ]]; then
+              echo "team9 storage state: OK"
+            else
+              echo "::error::Missing .auth/team9-storage-state.json. Check GitHub secret PLAYWRIGHT_STORAGE_STATE_JSON_TEAM9 and make sure it is saved under Repository secrets."
               exit 1
             fi
           fi
