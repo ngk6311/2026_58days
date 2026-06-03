@@ -194,6 +194,12 @@ python run.py all
 - `PLAYWRIGHT_STORAGE_STATE_JSON`
 - `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7`
 - `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM2`
+- `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM3`
+- `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM4`
+- `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM5`
+- `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM9`
+- `PLAYWRIGHT_STORAGE_STATE_JSON_BRIGADE1`
+- `PLAYWRIGHT_STORAGE_STATE_JSON_BRIGADE2`
 
 ### 建議的 secrets 值
 
@@ -227,7 +233,9 @@ python run.py all
 
 - 直接把 `.auth/team2-storage-state.json` 的完整內容貼進 GitHub Secret
 
-多小隊模式建議至少提供 `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7` 和 `PLAYWRIGHT_STORAGE_STATE_JSON_TEAM2`。
+其他小隊/大隊長也依照相同方式，將對應 `.auth/<team_key>-storage-state.json` 內容貼到 `PLAYWRIGHT_STORAGE_STATE_JSON_<TEAM_KEY>`。例如 `brigade2` 要使用 `PLAYWRIGHT_STORAGE_STATE_JSON_BRIGADE2`。
+
+多小隊模式建議為每個 `teams.json` 裡啟用的項目都提供對應 storage-state secret。
 `PLAYWRIGHT_STORAGE_STATE_JSON` 目前只保留給舊版單隊或作為 `team7` 的備援。
 
 ### 注意

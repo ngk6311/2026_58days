@@ -34,5 +34,10 @@
     "team_key": "brigade1",
     "sheet_id": "your-sheet-id",
     "school_id": "your-school-id"
+  },
+  {
+    "team_key": "brigade2",
+    "sheet_id": "your-sheet-id",
+    "school_id": "your-school-id"
   }
 ]

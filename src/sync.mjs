@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns";
 import { loadConfig } from "./env.mjs";
 import { GoogleSheetsClient } from "./google-sheets.mjs";
 import {
@@ -10,6 +11,11 @@ import {
   weekStartKey,
   zonedDateKey,
 } from "./time.mjs";
+
+dns.setDefaultResultOrder("ipv4first");
+
+const API_FETCH_TIMEOUT_MS = 20000;
+const API_FETCH_MAX_ATTEMPTS = 4;
 
 const SHEET_NAMES = [
   "task_rules",
@@ -184,6 +190,69 @@ function parseSchoolSlugFromPartnersUrl(url) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getFetchErrorCode(error) {
+  return (
+    error?.cause?.code ??
+    error?.cause?.errors?.find((item) => item?.code)?.code ??
+    error?.code ??
+    error?.name ??
+    "unknown"
+  );
+}
+
+function isRetriableStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function isRetriableFetchError(error) {
+  const code = getFetchErrorCode(error);
+  return ["AbortError", "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ENETUNREACH"].includes(code);
+}
+
+async function fetchWithRetry(url, options = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= API_FETCH_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), API_FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      if (!isRetriableStatus(response.status) || attempt === API_FETCH_MAX_ATTEMPTS) {
+        return response;
+      }
+
+      await response.arrayBuffer().catch(() => null);
+      const delayMs = 1000 * 2 ** (attempt - 1);
+      console.log(
+        `[FortuneAPI] ${response.status} on attempt ${attempt}/${API_FETCH_MAX_ATTEMPTS}, retrying in ${delayMs / 1000}s...`,
+      );
+      await sleep(delayMs);
+    } catch (error) {
+      lastError = error;
+      if (!isRetriableFetchError(error) || attempt === API_FETCH_MAX_ATTEMPTS) {
+        throw error;
+      }
+
+      const delayMs = 1000 * 2 ** (attempt - 1);
+      console.log(
+        `[FortuneAPI] fetch ${getFetchErrorCode(error)} on attempt ${attempt}/${API_FETCH_MAX_ATTEMPTS}, retrying in ${
+          delayMs / 1000
+        }s...`,
+      );
+      await sleep(delayMs);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw lastError;
+}
+
 async function resolveSchoolId(teamConfig, authToken) {
   const schoolSlug = parseSchoolSlugFromPartnersUrl(teamConfig.partnersUrl);
   if (!schoolSlug) {
@@ -191,7 +260,7 @@ async function resolveSchoolId(teamConfig, authToken) {
   }
 
   const url = `${teamConfig.apiBaseUrl}/api/v1/public/schoolsInfo/${schoolSlug}`;
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: {
       Accept: "application/json, text/plain, */*",
       Authorization: `Bearer ${authToken}`,
@@ -211,7 +280,7 @@ async function resolveSchoolId(teamConfig, authToken) {
 }
 
 async function getJson(url, authToken) {
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     method: "GET",
     headers: {
       Accept: "application/json, text/plain, */*",
@@ -234,7 +303,7 @@ async function getJson(url, authToken) {
 }
 
 async function getJsonOptional(url, authToken, allowedStatuses = [401, 403, 404]) {
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     method: "GET",
     headers: {
       Accept: "application/json, text/plain, */*",

@@ -47,5 +47,12 @@
     "role_type": "brigade",
     "storage_state_path": ".auth/brigade1-storage-state.json",
     "enabled": true
+  },
+  {
+    "team_key": "brigade2",
+    "team_name": "brigade2",
+    "role_type": "brigade",
+    "storage_state_path": ".auth/brigade2-storage-state.json",
+    "enabled": true
   }
 ]
