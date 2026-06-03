@@ -642,6 +642,10 @@ function stripCountSuffix(title) {
   return title.replace(/\s*\(\d+次\)$/, "");
 }
 
+function isDreamReleaseQuest(questTitle) {
+  return questTitle.includes("解圓夢計畫") || questTitle.includes("解圓夢計劃");
+}
+
 function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign) {
   const isBrigadeView = teamConfig.roleType === "brigade";
   const weekDates = campaign.weekDates;
@@ -670,7 +674,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
     {
       title: "圓夢計畫親證 (2次)",
       requiredCount: 2,
-      match: (questTitle) => questTitle.includes("圓夢計"),
+      match: (questTitle) => questTitle.includes("圓夢計") && !isDreamReleaseQuest(questTitle),
       displayPartialCount: true,
     },
     { title: "欣賞夥伴", requiredCount: 1, match: (questTitle) => questTitle === "欣賞夥伴" },
@@ -703,30 +707,25 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
       title: "巔峰取經試煉 (1次)",
       requiredCount: 1,
       match: (questTitle) => questTitle.includes(stripCountSuffix("巔峰取經試煉 (1次)")),
-      rangeStart: SPECIAL_EVENT_START,
-      rangeEnd: campaign.currentWeekEnd,
+      allTime: true,
     },
     {
       title: "解圓夢計畫 (1次)",
       requiredCount: 1,
-      match: (questTitle) =>
-        questTitle.includes(stripCountSuffix("解圓夢計畫 (1次)")) || questTitle.includes("解圓夢計劃"),
-      rangeStart: SPECIAL_EVENT_START,
-      rangeEnd: campaign.currentWeekEnd,
+      match: isDreamReleaseQuest,
+      allTime: true,
     },
     {
       title: "親證班課後課 (1次)",
       requiredCount: 1,
       match: (questTitle) => questTitle.includes(stripCountSuffix("親證班課後課 (1次)")),
-      rangeStart: SPECIAL_EVENT_START,
-      rangeEnd: campaign.currentWeekEnd,
+      allTime: true,
     },
     {
       title: "參加結業典禮 (1次)",
       requiredCount: 1,
       match: (questTitle) => questTitle.includes(stripCountSuffix("參加結業典禮 (1次)")),
-      rangeStart: SPECIAL_EVENT_START,
-      rangeEnd: campaign.currentWeekEnd,
+      allTime: true,
     },
   ];
 
@@ -740,7 +739,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
     ["主題親證週期", `${campaign.themeCycleLabel} ${campaign.themeCycleStart} ~ ${campaign.themeCycleEnd}`],
     [
       "說明",
-      "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，該輪完成 1 次即打勾。實體小組定聚自 2026-06-01 起按月份累計，6 月與 7 月各最多計 1 次；一次性活動自 2026-06-01 起累計，完成後後續週次會持續顯示。",
+      "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，該輪完成 1 次即打勾。實體小組定聚為 6 月、7 月各完成 1 次，總共 2 次即打勾。巔峰取經試煉、解圓夢計畫、親證班課後課、參加結業典禮為整個活動期間完成 1 次即打勾。",
     ],
     [],
     isBrigadeView ? BRIGADE_WEEKLY_DASHBOARD_HEADERS : WEEKLY_DASHBOARD_HEADERS,
@@ -776,13 +775,15 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
 
       const dailyCells = dailyCounts.map((count) => (count >= 3 ? "✓" : String(count)));
       const weeklyTaskChecks = taskMatchers.map((task) => {
-        const sourceLogs = task.rangeStart
-          ? allMemberLogs.filter(
-              (log) =>
-                (log.weeklyLogicalDate ?? log.logicalDate) >= task.rangeStart &&
-                (log.weeklyLogicalDate ?? log.logicalDate) <= task.rangeEnd,
-            )
-          : memberWeekLogs;
+        const sourceLogs = task.allTime
+          ? allMemberLogs
+          : task.rangeStart
+            ? allMemberLogs.filter(
+                (log) =>
+                  (log.weeklyLogicalDate ?? log.logicalDate) >= task.rangeStart &&
+                  (log.weeklyLogicalDate ?? log.logicalDate) <= task.rangeEnd,
+              )
+            : memberWeekLogs;
         const matchCount = countTaskMatches(sourceLogs, task);
         if (matchCount >= task.requiredCount) {
           return "✓";
