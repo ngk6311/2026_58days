@@ -114,6 +114,9 @@ const RUN_LOG_HEADERS = [
 
 const WEEKLY_DASHBOARD_HEADERS = [
   "隊員",
+  "今日分數",
+  "本週分數",
+  "總分",
   "週一定課",
   "週二定課",
   "週三定課",
@@ -136,6 +139,13 @@ const WEEKLY_DASHBOARD_HEADERS = [
 ];
 
 const BRIGADE_WEEKLY_DASHBOARD_HEADERS = ["小組", ...WEEKLY_DASHBOARD_HEADERS];
+const WEEKLY_HISTORY_DASHBOARD_HEADERS = [
+  WEEKLY_DASHBOARD_HEADERS[0],
+  "當週總分",
+  "當週加分",
+  ...WEEKLY_DASHBOARD_HEADERS.slice(4),
+];
+const BRIGADE_WEEKLY_HISTORY_DASHBOARD_HEADERS = ["小組", ...WEEKLY_HISTORY_DASHBOARD_HEADERS];
 
 const CAMPAIGN_WEEKS = [
   { weekLabel: "第1週", start: "2026-05-25", end: "2026-05-31", cycle: 1 },
@@ -151,6 +161,7 @@ const CAMPAIGN_WEEKS = [
 
 const SPECIAL_EVENT_START = "2026-06-01";
 const DAILY_TASK_COLUMN_COUNT = 7;
+const SCORE_COLUMN_COUNT = 3;
 const LEGACY_WEEKLY_TASK_COLUMN_COUNT = 7;
 
 function requireStorageState(storageStatePath) {
@@ -638,6 +649,28 @@ function countTaskMatches(logs, task) {
   return matchedLogs.length;
 }
 
+function sumLogPoints(logs) {
+  return logs.reduce((sum, log) => sum + Number(log.points ?? 0), 0);
+}
+
+function getCampaignScoreCells(member, allMemberLogs, campaign, scoreMode) {
+  if (scoreMode === "history") {
+    const weekPoints = sumLogPoints(
+      allMemberLogs.filter(
+        (log) =>
+          (log.weeklyLogicalDate ?? log.logicalDate) >= campaign.currentWeekStart &&
+          (log.weeklyLogicalDate ?? log.logicalDate) <= campaign.currentWeekEnd,
+      ),
+    );
+    const totalPointsAtWeekEnd = sumLogPoints(
+      allMemberLogs.filter((log) => (log.weeklyLogicalDate ?? log.logicalDate) <= campaign.currentWeekEnd),
+    );
+    return [totalPointsAtWeekEnd, weekPoints];
+  }
+
+  return [member.todayScore, member.weeklyScore, member.totalScore];
+}
+
 function stripCountSuffix(title) {
   return title.replace(/\s*\(\d+次\)$/, "");
 }
@@ -646,8 +679,17 @@ function isDreamReleaseQuest(questTitle) {
   return questTitle.includes("解圓夢計畫") || questTitle.includes("解圓夢計劃");
 }
 
-function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign) {
+function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign, options = {}) {
   const isBrigadeView = teamConfig.roleType === "brigade";
+  const scoreMode = options.scoreMode ?? "current";
+  const headerRow =
+    scoreMode === "history"
+      ? isBrigadeView
+        ? BRIGADE_WEEKLY_HISTORY_DASHBOARD_HEADERS
+        : WEEKLY_HISTORY_DASHBOARD_HEADERS
+      : isBrigadeView
+        ? BRIGADE_WEEKLY_DASHBOARD_HEADERS
+        : WEEKLY_DASHBOARD_HEADERS;
   const weekDates = campaign.weekDates;
   const monday = campaign.currentWeekStart;
   const sunday = campaign.currentWeekEnd;
@@ -742,7 +784,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
       "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，該輪完成 1 次即打勾。實體小組定聚為 6 月、7 月各完成 1 次，總共 2 次即打勾。巔峰取經試煉、解圓夢計畫、親證班課後課、參加結業典禮為整個活動期間完成 1 次即打勾。",
     ],
     [],
-    isBrigadeView ? BRIGADE_WEEKLY_DASHBOARD_HEADERS : WEEKLY_DASHBOARD_HEADERS,
+    headerRow,
   ];
 
   const memberRows = [...members]
@@ -794,9 +836,11 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign)
         return "";
       });
 
+      const scoreCells = getCampaignScoreCells(member, allMemberLogs, campaign, scoreMode);
+
       return isBrigadeView
-        ? [member.teamName, member.memberName, ...dailyCells, ...weeklyTaskChecks]
-        : [member.memberName, ...dailyCells, ...weeklyTaskChecks];
+        ? [member.teamName, member.memberName, ...scoreCells, ...dailyCells, ...weeklyTaskChecks]
+        : [member.memberName, ...scoreCells, ...dailyCells, ...weeklyTaskChecks];
     });
 
   return [...metaRows, ...memberRows];
@@ -812,7 +856,9 @@ function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreRese
 }
 
 function buildWeeklyHistorySection(teamConfig, members, rawLogs, campaign) {
-  const weeklyDashboardRows = buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign);
+  const weeklyDashboardRows = buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign, {
+    scoreMode: "history",
+  });
   const headerRow = weeklyDashboardRows[4] ?? [];
   const memberRows = weeklyDashboardRows.slice(5);
   const sectionLabel = `${campaign.currentWeekLabel} ${campaign.currentWeekStart} ~ ${campaign.currentWeekEnd}`;
@@ -859,9 +905,27 @@ function buildWeeklyHistoryRows(teamConfig, appConfig, members, rawLogs, scoreRe
   return rows;
 }
 
-function pushWeeklyHeaderColorRequests(requests, sheetId, rowIndex, colCount, hasBrigadeColumn) {
+function getWeeklyScoreColumnCount(headerRow, hasBrigadeColumn) {
+  const firstScoreIndex = hasBrigadeColumn ? 2 : 1;
+  const scoreLabels = new Set(["今日分數", "本週分數", "總分", "當週總分", "當週加分"]);
+  let count = 0;
+  while (scoreLabels.has(headerRow[firstScoreIndex + count])) {
+    count += 1;
+  }
+  return count;
+}
+
+function pushWeeklyHeaderColorRequests(
+  requests,
+  sheetId,
+  rowIndex,
+  colCount,
+  hasBrigadeColumn,
+  scoreColumnCount = SCORE_COLUMN_COUNT,
+) {
   const memberColumnIndex = hasBrigadeColumn ? 1 : 0;
-  const dailyStartColumnIndex = memberColumnIndex + 1;
+  const scoreStartColumnIndex = memberColumnIndex + 1;
+  const dailyStartColumnIndex = scoreStartColumnIndex + scoreColumnCount;
   const dailyEndColumnIndex = Math.min(dailyStartColumnIndex + DAILY_TASK_COLUMN_COUNT, colCount);
   const legacyWeeklyEndColumnIndex = Math.min(dailyEndColumnIndex + LEGACY_WEEKLY_TASK_COLUMN_COUNT, colCount);
   const newWeeklyStartColumnIndex = legacyWeeklyEndColumnIndex;
@@ -1007,7 +1071,15 @@ async function applyWeeklyHistoryFormatting(sheetsClient, rows) {
 
     const secondCell = String(row?.[1] ?? "");
     if (firstCell === "隊員" || secondCell === "隊員") {
-      pushWeeklyHeaderColorRequests(requests, sheetId, rowIndex, colCount, secondCell === "隊員");
+      const hasBrigadeColumn = secondCell === "隊員";
+      pushWeeklyHeaderColorRequests(
+        requests,
+        sheetId,
+        rowIndex,
+        colCount,
+        hasBrigadeColumn,
+        getWeeklyScoreColumnCount(row, hasBrigadeColumn),
+      );
     }
   }
 
@@ -1036,6 +1108,47 @@ async function applyWeeklyHistoryFormatting(sheetsClient, rows) {
           endIndex: 2,
         },
         properties: { pixelSize: 120 },
+        fields: "pixelSize",
+      },
+    });
+  }
+
+  const firstHeaderRow = rows.find((row) => row?.[0] === "隊員" || row?.[1] === "隊員") ?? [];
+  const hasBrigadeColumn = firstHeaderRow[1] === "隊員";
+  const memberColumnCount = hasBrigadeColumn ? 2 : 1;
+  const scoreStartColumnIndex = memberColumnCount;
+  const scoreEndColumnIndex = Math.min(
+    scoreStartColumnIndex + getWeeklyScoreColumnCount(firstHeaderRow, hasBrigadeColumn),
+    colCount,
+  );
+  const dailyStartColumnIndex = scoreEndColumnIndex;
+  const dailyEndColumnIndex = Math.min(dailyStartColumnIndex + DAILY_TASK_COLUMN_COUNT, colCount);
+
+  if (scoreStartColumnIndex < scoreEndColumnIndex) {
+    requests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: scoreStartColumnIndex,
+          endIndex: scoreEndColumnIndex,
+        },
+        properties: { pixelSize: 82 },
+        fields: "pixelSize",
+      },
+    });
+  }
+
+  if (dailyStartColumnIndex < dailyEndColumnIndex) {
+    requests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: dailyStartColumnIndex,
+          endIndex: dailyEndColumnIndex,
+        },
+        properties: { pixelSize: 72 },
         fields: "pixelSize",
       },
     });
@@ -1087,7 +1200,9 @@ async function applyWeeklyDashboardFormatting(sheetsClient, rows) {
   const headerRowIndex = 4;
   const hasBrigadeColumn = rows[headerRowIndex]?.[0] === "小組";
   const memberColumnCount = hasBrigadeColumn ? 2 : 1;
-  const dailyStartColumnIndex = memberColumnCount;
+  const scoreStartColumnIndex = memberColumnCount;
+  const scoreEndColumnIndex = Math.min(scoreStartColumnIndex + SCORE_COLUMN_COUNT, colCount);
+  const dailyStartColumnIndex = scoreEndColumnIndex;
   const dailyEndColumnIndex = Math.min(dailyStartColumnIndex + DAILY_TASK_COLUMN_COUNT, colCount);
   const legacyWeeklyStartColumnIndex = dailyEndColumnIndex;
   const legacyWeeklyEndColumnIndex = Math.min(
@@ -1121,7 +1236,10 @@ async function applyWeeklyDashboardFormatting(sheetsClient, rows) {
       updateSheetProperties: {
         properties: {
           sheetId,
-          gridProperties: { frozenRowCount: 5, frozenColumnCount: hasBrigadeColumn ? 2 : 1 },
+          gridProperties: {
+            frozenRowCount: 5,
+            frozenColumnCount: Math.min(memberColumnCount + SCORE_COLUMN_COUNT, colCount),
+          },
         },
         fields: "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
       },
@@ -1188,6 +1306,21 @@ async function applyWeeklyDashboardFormatting(sheetsClient, rows) {
       },
     },
   );
+
+  if (scoreStartColumnIndex < scoreEndColumnIndex) {
+    requests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: scoreStartColumnIndex,
+          endIndex: scoreEndColumnIndex,
+        },
+        properties: { pixelSize: 76 },
+        fields: "pixelSize",
+      },
+    });
+  }
 
   if (newWeeklyStartColumnIndex < colCount) {
     requests.push({
