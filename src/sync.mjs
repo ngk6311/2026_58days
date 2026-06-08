@@ -399,12 +399,13 @@ function isMondayDateKey(dateKey) {
 }
 
 function adjustWeeklyLogicalDates(rawLogs) {
-  const targetQuest = "親證分享";
+  const shouldCountAsPreviousWeekOnMonday = (questTitle) =>
+    questTitle === "親證分享" || questTitle.includes("主題親證");
   const grouped = new Map();
 
   for (const log of rawLogs) {
     log.weeklyLogicalDate = log.logicalDate;
-    if (log.questTitle !== targetQuest || !isMondayDateKey(log.logicalDate)) {
+    if (!shouldCountAsPreviousWeekOnMonday(log.questTitle) || !isMondayDateKey(log.logicalDate)) {
       continue;
     }
 
