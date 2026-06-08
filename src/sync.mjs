@@ -401,6 +401,7 @@ function isMondayDateKey(dateKey) {
 function adjustWeeklyLogicalDates(rawLogs) {
   const shouldCountAsPreviousWeekOnMonday = (questTitle) =>
     questTitle === "親證分享" || questTitle.includes("主題親證");
+  const campaignStart = CAMPAIGN_WEEKS[0].start;
 
   for (const log of rawLogs) {
     log.weeklyLogicalDate = log.logicalDate;
@@ -408,7 +409,10 @@ function adjustWeeklyLogicalDates(rawLogs) {
       continue;
     }
 
-    log.weeklyLogicalDate = addDays(log.logicalDate, -1);
+    const previousDate = addDays(log.logicalDate, -1);
+    if (previousDate >= campaignStart) {
+      log.weeklyLogicalDate = previousDate;
+    }
   }
 
   return rawLogs;
@@ -1550,6 +1554,9 @@ async function syncTeam(appConfig, teamConfig) {
   const schoolId = teamConfig.schoolId || (await resolveSchoolId(teamConfig, authToken));
   console.log(`[${teamConfig.teamKey}] Collecting members and logs...`);
   const collected = await collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken);
+  if (collected.members.length === 0) {
+    throw new Error(`[${teamConfig.teamKey}] Refusing to overwrite Google Sheets with 0 members. Refresh auth first.`);
+  }
 
   const sheetsClient = new GoogleSheetsClient({
     ...appConfig.google,
