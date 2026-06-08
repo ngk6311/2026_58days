@@ -401,7 +401,6 @@ function isMondayDateKey(dateKey) {
 function adjustWeeklyLogicalDates(rawLogs) {
   const shouldCountAsPreviousWeekOnMonday = (questTitle) =>
     questTitle === "親證分享" || questTitle.includes("主題親證");
-  const grouped = new Map();
 
   for (const log of rawLogs) {
     log.weeklyLogicalDate = log.logicalDate;
@@ -409,18 +408,7 @@ function adjustWeeklyLogicalDates(rawLogs) {
       continue;
     }
 
-    const key = `${log.memberId}::${log.logicalDate}`;
-    const logs = grouped.get(key) ?? [];
-    logs.push(log);
-    grouped.set(key, logs);
-  }
-
-  for (const [key, logs] of grouped.entries()) {
-    logs.sort((a, b) => String(a.loggedAt).localeCompare(String(b.loggedAt)));
-    const [, mondayDate] = key.split("::");
-    if (logs.length > 0) {
-      logs[0].weeklyLogicalDate = addDays(mondayDate, -1);
-    }
+    log.weeklyLogicalDate = addDays(log.logicalDate, -1);
   }
 
   return rawLogs;
