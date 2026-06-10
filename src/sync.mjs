@@ -117,6 +117,7 @@ const WEEKLY_DASHBOARD_HEADERS = [
   "今日分數",
   "本週分數",
   "總分",
+  "個人排名",
   "週一定課",
   "週二定課",
   "週三定課",
@@ -143,7 +144,7 @@ const WEEKLY_HISTORY_DASHBOARD_HEADERS = [
   WEEKLY_DASHBOARD_HEADERS[0],
   "當週總分",
   "當週加分",
-  ...WEEKLY_DASHBOARD_HEADERS.slice(4),
+  ...WEEKLY_DASHBOARD_HEADERS.slice(5),
 ];
 const BRIGADE_WEEKLY_HISTORY_DASHBOARD_HEADERS = ["小組", ...WEEKLY_HISTORY_DASHBOARD_HEADERS];
 
@@ -162,7 +163,9 @@ const CAMPAIGN_WEEKS = [
 const SPECIAL_EVENT_START = "2026-06-01";
 const DAILY_TASK_COLUMN_COUNT = 7;
 const SCORE_COLUMN_COUNT = 3;
+const WEEKLY_DASHBOARD_SCORE_COLUMN_COUNT = SCORE_COLUMN_COUNT + 1;
 const LEGACY_WEEKLY_TASK_COLUMN_COUNT = 7;
+const LEADERBOARD_LIMIT = 1000;
 
 function requireStorageState(storageStatePath) {
   const filePath = path.resolve(storageStatePath);
@@ -338,6 +341,28 @@ async function getJsonOptional(url, authToken, allowedStatuses = [401, 403, 404]
   }
 
   throw new Error(`Request failed: ${response.status} ${response.statusText} (${url})`);
+}
+
+async function fetchIndividualLeaderboardRanks(teamConfig, schoolId, authToken) {
+  const apiBase = `${teamConfig.apiBaseUrl}/api/v1/schools/${schoolId}/fortune_game`;
+  const leaderboard = await getJson(
+    `${apiBase}/leaderboard?type=individual&limit=${LEADERBOARD_LIMIT}`,
+    authToken,
+  );
+  const byId = new Map();
+  const byName = new Map();
+
+  for (const entry of leaderboard?.entries ?? []) {
+    const rank = entry.rank ?? "";
+    if (entry.user_id) {
+      byId.set(entry.user_id, rank);
+    }
+    if (entry.display_name) {
+      byName.set(entry.display_name, rank);
+    }
+  }
+
+  return { byId, byName };
 }
 
 async function mapWithConcurrency(items, limit, mapper) {
@@ -675,6 +700,8 @@ function isDreamReleaseQuest(questTitle) {
 function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign, options = {}) {
   const isBrigadeView = teamConfig.roleType === "brigade";
   const scoreMode = options.scoreMode ?? "current";
+  const leaderboardRanks = options.leaderboardRanks ?? { byId: new Map(), byName: new Map() };
+  const includeLeaderboardRank = scoreMode !== "history";
   const headerRow =
     scoreMode === "history"
       ? isBrigadeView
@@ -830,21 +857,26 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
       });
 
       const scoreCells = getCampaignScoreCells(member, allMemberLogs, campaign, scoreMode);
+      const leaderboardRank = includeLeaderboardRank
+        ? (leaderboardRanks.byId.get(member.memberId) ?? leaderboardRanks.byName.get(member.memberName) ?? "")
+        : null;
+      const dashboardScoreCells = includeLeaderboardRank ? [...scoreCells, leaderboardRank] : scoreCells;
 
       return isBrigadeView
-        ? [member.teamName, member.memberName, ...scoreCells, ...dailyCells, ...weeklyTaskChecks]
-        : [member.memberName, ...scoreCells, ...dailyCells, ...weeklyTaskChecks];
+        ? [member.teamName, member.memberName, ...dashboardScoreCells, ...dailyCells, ...weeklyTaskChecks]
+        : [member.memberName, ...dashboardScoreCells, ...dailyCells, ...weeklyTaskChecks];
     });
 
   return [...metaRows, ...memberRows];
 }
 
-function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreResetHour) {
+function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreResetHour, leaderboardRanks) {
   return buildWeeklyDashboardForCampaign(
     teamConfig,
     members,
     rawLogs,
     getCampaignWeekInfo(appConfig, scoreResetHour),
+    { leaderboardRanks },
   );
 }
 
@@ -900,7 +932,7 @@ function buildWeeklyHistoryRows(teamConfig, appConfig, members, rawLogs, scoreRe
 
 function getWeeklyScoreColumnCount(headerRow, hasBrigadeColumn) {
   const firstScoreIndex = hasBrigadeColumn ? 2 : 1;
-  const scoreLabels = new Set(["今日分數", "本週分數", "總分", "當週總分", "當週加分"]);
+  const scoreLabels = new Set(["今日分數", "本週分數", "總分", "個人排名", "當週總分", "當週加分"]);
   let count = 0;
   while (scoreLabels.has(headerRow[firstScoreIndex + count])) {
     count += 1;
@@ -1194,7 +1226,7 @@ async function applyWeeklyDashboardFormatting(sheetsClient, rows) {
   const hasBrigadeColumn = rows[headerRowIndex]?.[0] === "小組";
   const memberColumnCount = hasBrigadeColumn ? 2 : 1;
   const scoreStartColumnIndex = memberColumnCount;
-  const scoreEndColumnIndex = Math.min(scoreStartColumnIndex + SCORE_COLUMN_COUNT, colCount);
+  const scoreEndColumnIndex = Math.min(scoreStartColumnIndex + WEEKLY_DASHBOARD_SCORE_COLUMN_COUNT, colCount);
   const dailyStartColumnIndex = scoreEndColumnIndex;
   const dailyEndColumnIndex = Math.min(dailyStartColumnIndex + DAILY_TASK_COLUMN_COUNT, colCount);
   const legacyWeeklyStartColumnIndex = dailyEndColumnIndex;
@@ -1231,7 +1263,7 @@ async function applyWeeklyDashboardFormatting(sheetsClient, rows) {
           sheetId,
           gridProperties: {
             frozenRowCount: 5,
-            frozenColumnCount: Math.min(memberColumnCount + SCORE_COLUMN_COUNT, colCount),
+            frozenColumnCount: Math.min(memberColumnCount + WEEKLY_DASHBOARD_SCORE_COLUMN_COUNT, colCount),
           },
         },
         fields: "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
@@ -1248,7 +1280,14 @@ async function applyWeeklyDashboardFormatting(sheetsClient, rows) {
     });
   }
 
-  pushWeeklyHeaderColorRequests(requests, sheetId, headerRowIndex, colCount, hasBrigadeColumn);
+  pushWeeklyHeaderColorRequests(
+    requests,
+    sheetId,
+    headerRowIndex,
+    colCount,
+    hasBrigadeColumn,
+    WEEKLY_DASHBOARD_SCORE_COLUMN_COUNT,
+  );
 
   for (let rowIndex = 0; rowIndex < Math.min(headerRowIndex, rowCount); rowIndex += 1) {
     requests.push({
@@ -1558,6 +1597,14 @@ async function syncTeam(appConfig, teamConfig) {
     throw new Error(`[${teamConfig.teamKey}] Refusing to overwrite Google Sheets with 0 members. Refresh auth first.`);
   }
 
+  let leaderboardRanks = { byId: new Map(), byName: new Map() };
+  try {
+    leaderboardRanks = await fetchIndividualLeaderboardRanks(teamConfig, schoolId, authToken);
+    console.log(`[${teamConfig.teamKey}] Loaded ${leaderboardRanks.byId.size} individual leaderboard ranks.`);
+  } catch (error) {
+    console.warn(`[${teamConfig.teamKey}] Could not load individual leaderboard ranks: ${error.message}`);
+  }
+
   const sheetsClient = new GoogleSheetsClient({
     ...appConfig.google,
     spreadsheetId: teamConfig.sheetId,
@@ -1578,6 +1625,7 @@ async function syncTeam(appConfig, teamConfig) {
     collected.members,
     collected.rawLogs,
     collected.scoreResetHour,
+    leaderboardRanks,
   );
   const weeklyHistoryRows = buildWeeklyHistoryRows(
     teamConfig,

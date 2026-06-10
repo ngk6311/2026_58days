@@ -191,3 +191,6 @@ jobs:
 
       - name: Run sync
         run: python run.py sync
+
+      - name: Run lobby leaderboard sync
+        run: npm run sync:lobby
