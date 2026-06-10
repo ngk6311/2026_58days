@@ -35,6 +35,13 @@
     "enabled": true
   },
   {
+    "team_key": "team6",
+    "team_name": "team6",
+    "role_type": "team",
+    "storage_state_path": ".auth/team6-storage-state.json",
+    "enabled": true
+  },
+  {
     "team_key": "team9",
     "team_name": "team9",
     "role_type": "team",
