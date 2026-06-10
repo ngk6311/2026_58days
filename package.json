@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "auth": "node src/bootstrap-auth.mjs",
-    "sync": "node src/sync.mjs"
+    "sync": "node src/sync.mjs",
+    "sync:lobby": "node src/sync-lobby-leaderboard.mjs"
   },
   "dependencies": {
     "playwright": "^1.54.2"
