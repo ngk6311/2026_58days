@@ -886,16 +886,60 @@ function buildWeeklyHistorySection(teamConfig, members, rawLogs, campaign) {
   });
   const headerRow = weeklyDashboardRows[4] ?? [];
   const memberRows = weeklyDashboardRows.slice(5);
-  const sectionLabel = `${campaign.currentWeekLabel} ${campaign.currentWeekStart} ~ ${campaign.currentWeekEnd}`;
+  const sectionLabel = weeklyHistorySectionLabel(campaign);
   return {
     sectionLabel,
     rows: [[sectionLabel], headerRow, ...memberRows, [], [], []],
   };
 }
 
-function buildWeeklyHistoryRows(teamConfig, appConfig, members, rawLogs, scoreResetHour) {
+function weeklyHistorySectionLabel(campaign) {
+  return `${campaign.currentWeekLabel} ${campaign.currentWeekStart} ~ ${campaign.currentWeekEnd}`;
+}
+
+function splitWeeklyHistorySections(rows) {
+  const sectionLabels = new Set(
+    CAMPAIGN_WEEKS.map((week) =>
+      weeklyHistorySectionLabel({
+        currentWeekLabel: week.weekLabel,
+        currentWeekStart: week.start,
+        currentWeekEnd: week.end,
+      }),
+    ),
+  );
+  const sections = new Map();
+  let currentLabel = null;
+  let currentRows = [];
+
+  for (const row of rows ?? []) {
+    const label = String(row?.[0] ?? "");
+    if (sectionLabels.has(label)) {
+      if (currentLabel) {
+        sections.set(currentLabel, currentRows);
+      }
+      currentLabel = label;
+      currentRows = [row];
+      continue;
+    }
+
+    if (currentLabel) {
+      currentRows.push(row);
+    }
+  }
+
+  if (currentLabel) {
+    sections.set(currentLabel, currentRows);
+  }
+
+  return sections;
+}
+
+function buildWeeklyHistoryRows(teamConfig, appConfig, members, rawLogs, scoreResetHour, existingRows = []) {
   const today = todayKey(appConfig.timezone, scoreResetHour);
   const campaigns = CAMPAIGN_WEEKS.filter((week) => week.start <= today);
+  const currentCampaign = getCampaignWeekInfo(appConfig, scoreResetHour);
+  const preserveBeforeDate = addDays(currentCampaign.currentWeekStart, -7);
+  const existingSections = splitWeeklyHistorySections(existingRows);
   const rows = [];
 
   for (const week of campaigns) {
@@ -922,6 +966,12 @@ function buildWeeklyHistoryRows(teamConfig, appConfig, members, rawLogs, scoreRe
       themeCycleStart: cycleWeeks[0].start,
       themeCycleEnd: cycleWeeks[cycleWeeks.length - 1].end,
     };
+
+    const sectionLabel = weeklyHistorySectionLabel(campaign);
+    if (week.end < preserveBeforeDate && existingSections.has(sectionLabel)) {
+      rows.push(...existingSections.get(sectionLabel));
+      continue;
+    }
 
     const section = buildWeeklyHistorySection(teamConfig, members, rawLogs, campaign);
     rows.push(...section.rows);
@@ -1609,6 +1659,8 @@ async function syncTeam(appConfig, teamConfig) {
     ...appConfig.google,
     spreadsheetId: teamConfig.sheetId,
   });
+  await sheetsClient.ensureSheets(SHEET_NAMES);
+  const existingWeeklyHistoryRows = await sheetsClient.getValues("weekly_history!A:ZZ");
 
   const taskRules = await loadTaskRules(sheetsClient);
   const questCatalog = buildQuestCatalog(collected.rawLogs);
@@ -1633,6 +1685,7 @@ async function syncTeam(appConfig, teamConfig) {
     collected.members,
     collected.rawLogs,
     collected.scoreResetHour,
+    existingWeeklyHistoryRows,
   );
 
   console.log(`[${teamConfig.teamKey}] Writing Google Sheets...`);
