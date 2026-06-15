@@ -552,6 +552,58 @@ function rowsFromObjects(headers, objects, mapper) {
   return [headers, ...objects.map(mapper)];
 }
 
+function rawLogKey(log) {
+  return log.logId || `${log.memberId}::${log.questTitle}::${log.loggedAt}`;
+}
+
+function rawLogFromSheetRow(row) {
+  if (!row?.[0] && !row?.[1] && !row?.[6] && !row?.[9]) {
+    return null;
+  }
+
+  const log = {
+    logId: row[0] ?? "",
+    memberId: row[1] ?? "",
+    studentId: row[2] ?? "",
+    memberName: row[3] ?? "",
+    teamId: row[4] ?? "",
+    teamName: row[5] ?? "",
+    questTitle: row[6] ?? "",
+    sourceType: row[7] ?? "",
+    points: Number(row[8] ?? 0),
+    loggedAt: row[9] ?? "",
+    logicalDate: row[10] ?? "",
+    weeklyLogicalDate: row[10] ?? "",
+    fetchedAt: row[11] ?? "",
+  };
+  return rawLogKey(log) ? log : null;
+}
+
+function mergeRawLogs(existingRows, newLogs) {
+  const logsByKey = new Map();
+
+  for (const row of existingRows.slice(1)) {
+    const log = rawLogFromSheetRow(row);
+    if (log) {
+      logsByKey.set(rawLogKey(log), log);
+    }
+  }
+
+  for (const log of newLogs) {
+    logsByKey.set(rawLogKey(log), log);
+  }
+
+  const mergedLogs = [...logsByKey.values()].sort((a, b) => {
+    const timeCompare = String(a.loggedAt).localeCompare(String(b.loggedAt));
+    if (timeCompare !== 0) {
+      return timeCompare;
+    }
+    return String(a.logId).localeCompare(String(b.logId));
+  });
+
+  return adjustWeeklyLogicalDates(mergedLogs);
+}
+
 async function loadTaskRules(sheetsClient) {
   const values = await sheetsClient.getValues("task_rules!A:H");
   if (values.length <= 1) {
@@ -1629,11 +1681,10 @@ async function writeAllSheets(sheetsClient, payload) {
   });
 
   if (skipFormatting) {
-    console.log("Skipping Google Sheets formatting because FORTUNE_SKIP_FORMATTING is enabled.");
-  } else {
-    await applyWeeklyDashboardFormatting(sheetsClient, weeklyDashboardRows);
-    await applyWeeklyHistoryFormatting(sheetsClient, weeklyHistoryRows);
+    console.log("FORTUNE_SKIP_FORMATTING is enabled, but weekly dashboard/history formatting is still applied.");
   }
+  await applyWeeklyDashboardFormatting(sheetsClient, weeklyDashboardRows);
+  await applyWeeklyHistoryFormatting(sheetsClient, weeklyHistoryRows);
 }
 
 async function syncTeam(appConfig, teamConfig) {
@@ -1660,12 +1711,21 @@ async function syncTeam(appConfig, teamConfig) {
     spreadsheetId: teamConfig.sheetId,
   });
   await sheetsClient.ensureSheets(SHEET_NAMES);
-  const existingWeeklyHistoryRows = await sheetsClient.getValues("weekly_history!A:ZZ");
+  const [existingWeeklyHistoryRows, existingRawLogRows] = await Promise.all([
+    sheetsClient.getValues("weekly_history!A:ZZ"),
+    sheetsClient.getValues("raw_logs!A:L"),
+  ]);
+  const mergedRawLogs = mergeRawLogs(existingRawLogRows, collected.rawLogs);
+  console.log(
+    `[${teamConfig.teamKey}] Merged raw logs: ${existingRawLogRows.length > 1 ? existingRawLogRows.length - 1 : 0} existing + ${
+      collected.rawLogs.length
+    } fetched => ${mergedRawLogs.length} total.`,
+  );
 
   const taskRules = await loadTaskRules(sheetsClient);
-  const questCatalog = buildQuestCatalog(collected.rawLogs);
+  const questCatalog = buildQuestCatalog(mergedRawLogs);
   const { dailyRows, weeklyRows } = aggregateStatus(
-    collected.rawLogs,
+    mergedRawLogs,
     collected.members,
     taskRules,
     appConfig,
@@ -1675,7 +1735,7 @@ async function syncTeam(appConfig, teamConfig) {
     teamConfig,
     appConfig,
     collected.members,
-    collected.rawLogs,
+    mergedRawLogs,
     collected.scoreResetHour,
     leaderboardRanks,
   );
@@ -1683,7 +1743,7 @@ async function syncTeam(appConfig, teamConfig) {
     teamConfig,
     appConfig,
     collected.members,
-    collected.rawLogs,
+    mergedRawLogs,
     collected.scoreResetHour,
     existingWeeklyHistoryRows,
   );
@@ -1691,6 +1751,7 @@ async function syncTeam(appConfig, teamConfig) {
   console.log(`[${teamConfig.teamKey}] Writing Google Sheets...`);
   await writeAllSheets(sheetsClient, {
     ...collected,
+    rawLogs: mergedRawLogs,
     questCatalog,
     dailyRows,
     weeklyRows,
