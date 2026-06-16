@@ -166,6 +166,7 @@ const SCORE_COLUMN_COUNT = 3;
 const WEEKLY_DASHBOARD_SCORE_COLUMN_COUNT = SCORE_COLUMN_COUNT + 1;
 const LEGACY_WEEKLY_TASK_COLUMN_COUNT = 7;
 const LEADERBOARD_LIMIT = 1000;
+const SCORE_LOG_LIMIT_MAX = 100;
 
 function requireStorageState(storageStatePath) {
   const filePath = path.resolve(storageStatePath);
@@ -512,12 +513,13 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
   for (const team of teamsToSync) {
     const teamMembers = teamMemberMap.get(team.teamId) ?? [];
     members.push(...teamMembers);
+    const scoreLogLimit = Math.min(appConfig.logLimit, SCORE_LOG_LIMIT_MAX);
 
     const memberLogRows = await mapWithConcurrency(teamMembers, appConfig.logConcurrency, async (member) => {
       const scoreLogUrl =
         team.isCurrentTeam || !useBrigadeMode
-          ? `${apiBase}/my-team/members/${member.studentId}/score-logs?limit=${appConfig.logLimit}`
-          : `${apiBase}/my-brigade/teams/${team.teamId}/members/${member.studentId}/score-logs?limit=${appConfig.logLimit}`;
+          ? `${apiBase}/my-team/members/${member.studentId}/score-logs?limit=${scoreLogLimit}`
+          : `${apiBase}/my-brigade/teams/${team.teamId}/members/${member.studentId}/score-logs?limit=${scoreLogLimit}`;
       const logs = await getJson(scoreLogUrl, authToken);
 
       return (logs ?? []).map((log) => {
