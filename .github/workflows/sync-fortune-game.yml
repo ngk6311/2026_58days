@@ -1,5 +1,9 @@
 name: Sync Fortune Game
 
+concurrency:
+  group: sync-fortune-game
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -191,6 +195,9 @@ jobs:
 
       - name: Run sync
         run: python run.py sync
+
+      - name: Cool down Google Sheets quota
+        run: sleep 90
 
       - name: Run lobby leaderboard sync
         run: npm run sync:lobby
