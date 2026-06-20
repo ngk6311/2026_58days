@@ -424,6 +424,23 @@ function isMondayDateKey(dateKey) {
   return new Date(`${dateKey}T00:00:00Z`).getUTCDay() === 1;
 }
 
+function themeProofCycleNumber(questTitle) {
+  const normalizedQuestTitle = questTitle.replace(/\s+/g, "");
+  const match = normalizedQuestTitle.match(/主題親證(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+function themeProofCycleRange(cycleNumber) {
+  const cycleWeeks = CAMPAIGN_WEEKS.filter((week) => week.cycle === cycleNumber);
+  if (cycleWeeks.length === 0) {
+    return null;
+  }
+  return {
+    start: cycleWeeks[0].start,
+    end: cycleWeeks[cycleWeeks.length - 1].end,
+  };
+}
+
 function adjustWeeklyLogicalDates(rawLogs) {
   const shouldCountAsPreviousWeekOnMonday = (questTitle) =>
     questTitle === "親證分享" || questTitle.includes("主題親證");
@@ -436,6 +453,15 @@ function adjustWeeklyLogicalDates(rawLogs) {
     }
 
     const previousDate = addDays(log.logicalDate, -1);
+    const themeCycleNumber = themeProofCycleNumber(log.questTitle);
+    if (themeCycleNumber) {
+      const cycleRange = themeProofCycleRange(themeCycleNumber);
+      if (cycleRange && previousDate >= cycleRange.start && previousDate <= cycleRange.end) {
+        log.weeklyLogicalDate = previousDate;
+      }
+      continue;
+    }
+
     if (previousDate >= campaignStart) {
       log.weeklyLogicalDate = previousDate;
     }
@@ -816,8 +842,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
       title: "主題親證",
       requiredCount: 1,
       match: (questTitle) => matchesThemeProofQuest(questTitle, campaign),
-      rangeStart: campaign.themeCycleStart,
-      rangeEnd: campaign.themeCycleEnd,
+      allTime: true,
     },
     { title: "天使通話 (1次)", requiredCount: 1, match: (questTitle) => questTitle === "天使通話" },
     { title: "蓋婭的召喚 (1次)", requiredCount: 1, match: (questTitle) => questTitle === "蓋婭的召喚" },
