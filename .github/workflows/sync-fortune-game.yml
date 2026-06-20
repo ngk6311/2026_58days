@@ -195,9 +195,3 @@ jobs:
 
       - name: Run sync
         run: python run.py sync
-
-      - name: Cool down Google Sheets quota
-        run: sleep 90
-
-      - name: Run lobby leaderboard sync
-        run: npm run sync:lobby

@@ -1,0 +1,69 @@
+name: Sync Lobby Leaderboard
+
+concurrency:
+  group: sync-lobby-leaderboard
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 0 * * *"
+    - cron: "15 15 * * *"
+
+jobs:
+  sync-lobby:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write runtime secrets
+        shell: bash
+        run: |
+          mkdir -p .auth
+          cat > .env <<'EOF'
+          FORTUNE_PARTNERS_URL=${{ secrets.FORTUNE_PARTNERS_URL }}
+          FORTUNE_SHEET_ID=${{ secrets.FORTUNE_SHEET_ID }}
+          FORTUNE_SCHOOL_ID=${{ secrets.FORTUNE_SCHOOL_ID }}
+          FORTUNE_API_BASE_URL=${{ secrets.FORTUNE_API_BASE_URL }}
+          FORTUNE_TIMEZONE=${{ secrets.FORTUNE_TIMEZONE }}
+          FORTUNE_SCORE_RESET_HOUR=${{ secrets.FORTUNE_SCORE_RESET_HOUR }}
+          FORTUNE_WEEK_START=${{ secrets.FORTUNE_WEEK_START }}
+          FORTUNE_LOG_LIMIT=${{ secrets.FORTUNE_LOG_LIMIT }}
+          FORTUNE_LOG_CONCURRENCY=${{ secrets.FORTUNE_LOG_CONCURRENCY }}
+          FORTUNE_LOOKBACK_DAYS=${{ secrets.FORTUNE_LOOKBACK_DAYS }}
+          FORTUNE_SKIP_FORMATTING=${{ secrets.FORTUNE_SKIP_FORMATTING }}
+          FORTUNE_WEB_APP_URL=${{ secrets.FORTUNE_WEB_APP_URL }}
+          GOOGLE_CREDENTIALS_PATH=./credentials.json
+          EOF
+          printf '%s' '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+
+          if [[ -n '${{ secrets.TEAMS_CONFIG_JSON }}' ]]; then
+            printf '%s' '${{ secrets.TEAMS_CONFIG_JSON }}' > teams.local.json
+          fi
+
+          if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7 }}' ]]; then
+            printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7 }}' > .auth/team7-storage-state.json
+          elif [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' ]]; then
+            printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON }}' > .auth/team7-storage-state.json
+          else
+            echo "::error::Missing team7 auth. Add PLAYWRIGHT_STORAGE_STATE_JSON_TEAM7 or fallback PLAYWRIGHT_STORAGE_STATE_JSON."
+            exit 1
+          fi
+
+      - name: Run lobby leaderboard sync
+        run: npm run sync:lobby
