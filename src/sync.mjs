@@ -679,6 +679,7 @@ function getCampaignWeekInfo(config, scoreResetHour) {
       themeCycleLabel: "一般週",
       themeCycleStart: weekDates[0],
       themeCycleEnd: weekDates[6],
+      themeQuestTitle: null,
     };
   }
 
@@ -704,6 +705,7 @@ function getCampaignWeekInfo(config, scoreResetHour) {
         : cycleWeeks[0].weekLabel,
     themeCycleStart: cycleWeeks[0].start,
     themeCycleEnd: cycleWeeks[cycleWeeks.length - 1].end,
+    themeQuestTitle: `主題親證${matchedWeek.cycle}`,
   };
 }
 
@@ -749,6 +751,22 @@ function stripCountSuffix(title) {
 
 function isDreamReleaseQuest(questTitle) {
   return questTitle.includes("解圓夢計畫") || questTitle.includes("解圓夢計劃");
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function matchesThemeProofQuest(questTitle, campaign) {
+  if (!questTitle.includes("主題親證")) {
+    return false;
+  }
+  if (!campaign.themeQuestTitle) {
+    return true;
+  }
+  const normalizedQuestTitle = questTitle.replace(/\s+/g, "");
+  const normalizedThemeTitle = campaign.themeQuestTitle.replace(/\s+/g, "");
+  return new RegExp(`${escapeRegExp(normalizedThemeTitle)}(?!\\d)`).test(normalizedQuestTitle);
 }
 
 function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign, options = {}) {
@@ -797,7 +815,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
     {
       title: "主題親證",
       requiredCount: 1,
-      match: (questTitle) => questTitle.includes("主題親證"),
+      match: (questTitle) => matchesThemeProofQuest(questTitle, campaign),
       rangeStart: campaign.themeCycleStart,
       rangeEnd: campaign.themeCycleEnd,
     },
@@ -855,7 +873,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
     ["主題親證週期", `${campaign.themeCycleLabel} ${campaign.themeCycleStart} ~ ${campaign.themeCycleEnd}`],
     [
       "說明",
-      "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，該輪完成 1 次即打勾。實體小組定聚為 6 月、7 月各完成 1 次，總共 2 次即打勾。巔峰取經試煉、解圓夢計畫、親證班課後課、參加結業典禮為整個活動期間完成 1 次即打勾。",
+      "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，只認該輪指定主題親證，完成 1 次即打勾。實體小組定聚為 6 月、7 月各完成 1 次，總共 2 次即打勾。巔峰取經試煉、解圓夢計畫、親證班課後課、參加結業典禮為整個活動期間完成 1 次即打勾。",
     ],
     [],
     headerRow,
@@ -975,6 +993,7 @@ function buildWeeklyHistoryRows(teamConfig, appConfig, members, rawLogs, scoreRe
           : cycleWeeks[0].weekLabel,
       themeCycleStart: cycleWeeks[0].start,
       themeCycleEnd: cycleWeeks[cycleWeeks.length - 1].end,
+      themeQuestTitle: `主題親證${week.cycle}`,
     };
 
     const section = buildWeeklyHistorySection(teamConfig, members, rawLogs, campaign);
