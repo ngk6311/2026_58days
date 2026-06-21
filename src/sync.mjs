@@ -496,16 +496,31 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
   const notes = [useBrigadeMode ? "brigade captain" : "team leader/member"];
 
   const teamsToSync = [];
+  const addTeamToSync = (team) => {
+    if (!team?.teamId || teamsToSync.some((item) => item.teamId === team.teamId)) {
+      return;
+    }
+    teamsToSync.push(team);
+  };
+
   if (useBrigadeMode) {
     for (const team of brigadeData?.teams ?? []) {
-      teamsToSync.push({
+      addTeamToSync({
         teamId: team.team_id,
         teamName: team.team_name,
         isCurrentTeam: !expectsBrigadeRole && currentTeamId ? team.team_id === currentTeamId : false,
       });
     }
+    if (expectsBrigadeRole && teamData?.team) {
+      addTeamToSync({
+        teamId: teamData.team.id,
+        teamName: teamData.team.name,
+        isCurrentTeam: true,
+      });
+      notes.push("included current team for brigade captain");
+    }
   } else if (teamData?.team) {
-    teamsToSync.push({
+    addTeamToSync({
       teamId: teamData.team.id,
       teamName: teamData.team.name,
       isCurrentTeam: true,
@@ -1677,7 +1692,8 @@ async function writeAllSheets(sheetsClient, payload) {
   });
 
   if (skipFormatting) {
-    console.log("FORTUNE_SKIP_FORMATTING is enabled, but weekly dashboard/history formatting is still applied.");
+    console.log("FORTUNE_SKIP_FORMATTING is enabled; weekly dashboard/history formatting was skipped.");
+    return;
   }
   await applyWeeklyDashboardFormatting(sheetsClient, weeklyDashboardRows);
   await applyWeeklyHistoryFormatting(sheetsClient, weeklyHistoryRows);
@@ -1758,7 +1774,20 @@ async function syncTeam(appConfig, teamConfig) {
 
 async function main() {
   const appConfig = loadConfig();
-  for (const teamConfig of appConfig.teams) {
+  const teamsToSync =
+    appConfig.syncTeamKeys.length > 0
+      ? appConfig.teams.filter((teamConfig) => appConfig.syncTeamKeys.includes(teamConfig.teamKey))
+      : appConfig.teams;
+
+  if (teamsToSync.length === 0) {
+    throw new Error(`No enabled teams match FORTUNE_SYNC_TEAM_KEYS=${appConfig.syncTeamKeys.join(",")}`);
+  }
+
+  if (appConfig.syncTeamKeys.length > 0) {
+    console.log(`Filtering sync to teams: ${teamsToSync.map((teamConfig) => teamConfig.teamKey).join(", ")}`);
+  }
+
+  for (const teamConfig of teamsToSync) {
     await syncTeam(appConfig, teamConfig);
   }
 }
