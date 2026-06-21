@@ -5,7 +5,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { chromium } from "playwright";
 import { loadConfig } from "./env.mjs";
 
-const config = loadConfig();
+const config = loadConfig({ includeDisabledTeams: true });
 const requestedTeamKey = process.argv[2] || "default";
 const teamConfig =
   config.teams.find((team) => team.teamKey === requestedTeamKey) ??

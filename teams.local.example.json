@@ -38,6 +38,15 @@
   {
     "team_key": "brigade2",
     "sheet_id": "your-sheet-id",
-    "school_id": "your-school-id"
+    "school_id": "your-school-id",
+    "extra_self_members": [
+      {
+        "key": "captain-example",
+        "member_name": "大隊長姓名",
+        "team_name": "大隊長",
+        "identity_name": "如來佛祖(大隊長)",
+        "storage_state_path": ".auth/captain-example-storage-state.json"
+      }
+    ]
   }
 ]

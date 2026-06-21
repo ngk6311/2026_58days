@@ -69,6 +69,13 @@ function getBooleanEnv(key, fallback = false) {
   return ["1", "true", "yes", "y", "on"].includes(String(raw).trim().toLowerCase());
 }
 
+function getListEnv(key) {
+  return getEnv(key, "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function loadGoogleCredentials() {
   const credentialsPath = getEnv("GOOGLE_CREDENTIALS_PATH", "./credentials.json");
   const resolvedPath = path.resolve(credentialsPath);
@@ -113,6 +120,7 @@ function loadBaseConfig() {
     logConcurrency: getPositiveIntEnv("FORTUNE_LOG_CONCURRENCY", 8),
     lookbackDays: getPositiveIntEnv("FORTUNE_LOOKBACK_DAYS", 28),
     skipFormatting: getBooleanEnv("FORTUNE_SKIP_FORMATTING", false),
+    syncTeamKeys: getListEnv("FORTUNE_SYNC_TEAM_KEYS"),
     google: {
       clientEmail: googleCredentials.clientEmail,
       privateKey: googleCredentials.privateKey,
@@ -176,6 +184,7 @@ function normalizeTeamConfig(raw, baseConfig) {
   const teamKey = raw.team_key || raw.teamKey;
   const sheetId = raw.sheet_id || raw.sheetId;
   const roleType = (raw.role_type || raw.roleType || "team").toLowerCase();
+  const rawExtraSelfMembers = raw.extra_self_members || raw.extraSelfMembers || [];
 
   if (!teamKey) {
     throw new Error("Each team config must include team_key.");
@@ -201,10 +210,21 @@ function normalizeTeamConfig(raw, baseConfig) {
     storageStatePath:
       raw.storage_state_path || raw.storageStatePath || `.auth/${teamKey}-storage-state.json`,
     enabled: raw.enabled !== false,
+    extraSelfMembers: rawExtraSelfMembers
+      .filter((item) => item?.enabled !== false)
+      .map((item, index) => ({
+        key: item.key || item.member_key || item.memberKey || `${teamKey}-extra-self-${index + 1}`,
+        memberName: item.member_name || item.memberName || item.name || "",
+        teamId: item.team_id || item.teamId || "",
+        teamName: item.team_name || item.teamName || raw.team_name || raw.teamName || teamKey,
+        identityName: item.identity_name || item.identityName || "",
+        storageStatePath:
+          item.storage_state_path || item.storageStatePath || `.auth/${item.key || item.member_key || item.memberKey}.json`,
+      })),
   };
 }
 
-function loadTeamsConfig(baseConfig) {
+function loadTeamsConfig(baseConfig, options = {}) {
   let rawTeams = [];
 
   if (fs.existsSync(TEAMS_CONFIG_PATH)) {
@@ -221,7 +241,8 @@ function loadTeamsConfig(baseConfig) {
   }
 
   if (rawTeams.length > 0) {
-    return rawTeams.map((item) => normalizeTeamConfig(item, baseConfig)).filter((item) => item.enabled);
+    const normalizedTeams = rawTeams.map((item) => normalizeTeamConfig(item, baseConfig));
+    return options.includeDisabledTeams ? normalizedTeams : normalizedTeams.filter((item) => item.enabled);
   }
 
   return [
@@ -242,10 +263,10 @@ function loadTeamsConfig(baseConfig) {
   ];
 }
 
-export function loadConfig() {
+export function loadConfig(options = {}) {
   const baseConfig = loadBaseConfig();
   return {
     ...baseConfig,
-    teams: loadTeamsConfig(baseConfig),
+    teams: loadTeamsConfig(baseConfig, options),
   };
 }

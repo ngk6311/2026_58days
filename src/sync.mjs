@@ -167,6 +167,8 @@ const WEEKLY_DASHBOARD_SCORE_COLUMN_COUNT = SCORE_COLUMN_COUNT + 1;
 const LEGACY_WEEKLY_TASK_COLUMN_COUNT = 7;
 const LEADERBOARD_LIMIT = 1000;
 const SCORE_LOG_LIMIT_MAX = 100;
+const SELF_SCORE_LOG_LIMIT_MAX = 50;
+const SELF_SCORE_LOG_MAX_PAGES = 50;
 
 function requireStorageState(storageStatePath) {
   const filePath = path.resolve(storageStatePath);
@@ -399,6 +401,22 @@ function normalizeMember(team, member) {
   };
 }
 
+function compareMembersForDisplay(a, b, { groupByTeam = true } = {}) {
+  if (a.isBrigadeCaptain !== b.isBrigadeCaptain) {
+    return a.isBrigadeCaptain ? -1 : 1;
+  }
+  if (a.isTeamCaptain !== b.isTeamCaptain) {
+    return a.isTeamCaptain ? -1 : 1;
+  }
+  if (groupByTeam) {
+    const teamCompare = a.teamName.localeCompare(b.teamName, "zh-Hant");
+    if (teamCompare !== 0) {
+      return teamCompare;
+    }
+  }
+  return a.memberName.localeCompare(b.memberName, "zh-Hant");
+}
+
 function buildLogRow(log, member, fetchedAt, logicalDate) {
   return {
     logId: log.id ?? "",
@@ -415,6 +433,82 @@ function buildLogRow(log, member, fetchedAt, logicalDate) {
     weeklyLogicalDate: logicalDate,
     fetchedAt,
   };
+}
+
+async function fetchSelfScoreLogs(apiBase, authToken, limit) {
+  const pageLimit = Math.min(limit, SELF_SCORE_LOG_LIMIT_MAX);
+  const logs = [];
+  const seenPageCursors = new Set();
+  let lastLoggedAt = "";
+
+  for (let pageIndex = 0; pageIndex < SELF_SCORE_LOG_MAX_PAGES; pageIndex += 1) {
+    const params = new URLSearchParams({ limit: String(pageLimit) });
+    if (lastLoggedAt) {
+      params.set("last_logged_at", lastLoggedAt);
+    }
+
+    const pageLogs = await getJson(`${apiBase}/my-score-logs?${params.toString()}`, authToken);
+    if (!Array.isArray(pageLogs) || pageLogs.length === 0) {
+      break;
+    }
+
+    logs.push(...pageLogs);
+
+    const nextCursor = pageLogs.at(-1)?.logged_at ?? "";
+    if (!nextCursor || pageLogs.length < pageLimit || seenPageCursors.has(nextCursor)) {
+      break;
+    }
+
+    seenPageCursors.add(nextCursor);
+    lastLoggedAt = nextCursor;
+  }
+
+  return logs;
+}
+
+async function collectExtraSelfMembersAndLogs(teamConfig, appConfig, schoolId, scoreResetHour, fetchedAt) {
+  const members = [];
+  const rawLogs = [];
+  const notes = [];
+
+  for (const extraMember of teamConfig.extraSelfMembers ?? []) {
+    const storageStatePath = requireStorageState(extraMember.storageStatePath);
+    const authToken = readAccessTokenFromStorageState(storageStatePath);
+    const apiBase = `${teamConfig.apiBaseUrl}/api/v1/schools/${schoolId}/fortune_game`;
+    const [profile, studentProfile] = await Promise.all([
+      getJson(`${apiBase}/me`, authToken),
+      getJsonOptional(`${teamConfig.apiBaseUrl}/api/v1/students/me`, authToken),
+    ]);
+
+    const studentId = profile?.student_id ?? studentProfile?.id ?? "";
+    const memberName = extraMember.memberName || studentProfile?.display_name || studentId || extraMember.key;
+    const member = {
+      teamId: extraMember.teamId || profile?.team_id || profile?.brigade_id || extraMember.key,
+      teamName: extraMember.teamName || teamConfig.teamName,
+      memberId: studentId || extraMember.key,
+      studentId,
+      memberName,
+      identityName: extraMember.identityName,
+      isTeamCaptain: Boolean(profile?.is_captain),
+      isBrigadeCaptain: Boolean(profile?.is_brigade_captain),
+      todayScore: Number(profile?.today_score_accumulated ?? 0),
+      weeklyScore: Number(profile?.weekly_score_accumulated ?? 0),
+      totalScore: Number(profile?.total_score ?? 0),
+    };
+    members.push(member);
+
+    const logs = await fetchSelfScoreLogs(apiBase, authToken, appConfig.logLimit);
+    for (const log of logs) {
+      const logicalDate = log.logged_at
+        ? zonedDateKey(new Date(log.logged_at), appConfig.timezone, scoreResetHour)
+        : "";
+      rawLogs.push(buildLogRow(log, member, fetchedAt, logicalDate));
+    }
+
+    notes.push(`${extraMember.key}: ${logs.length} self score logs`);
+  }
+
+  return { members, rawLogs, notes };
 }
 
 function isMondayDateKey(dateKey) {
@@ -581,6 +675,26 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
     }
   }
 
+  if (teamConfig.extraSelfMembers?.length) {
+    const extraCollected = await collectExtraSelfMembersAndLogs(
+      teamConfig,
+      appConfig,
+      schoolId,
+      scoreResetHour,
+      fetchedAt,
+    );
+    members.push(...extraCollected.members);
+    notes.push(...extraCollected.notes);
+
+    for (const row of extraCollected.rawLogs) {
+      if (!logIds.has(row.logId)) {
+        logIds.add(row.logId);
+        rawLogs.push(row);
+      }
+    }
+  }
+
+  members.sort((a, b) => compareMembersForDisplay(a, b, { groupByTeam: useBrigadeMode }));
   adjustWeeklyLogicalDates(rawLogs);
 
   return {
@@ -920,18 +1034,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
   ];
 
   const memberRows = [...members]
-    .sort((a, b) => {
-      if (isBrigadeView) {
-        const teamCompare = a.teamName.localeCompare(b.teamName, "zh-Hant");
-        if (teamCompare !== 0) {
-          return teamCompare;
-        }
-      }
-      if (a.isTeamCaptain !== b.isTeamCaptain) {
-        return a.isTeamCaptain ? -1 : 1;
-      }
-      return a.memberName.localeCompare(b.memberName, "zh-Hant");
-    })
+    .sort((a, b) => compareMembersForDisplay(a, b, { groupByTeam: isBrigadeView }))
     .map((member) => {
       const allMemberLogs = logsByMember.get(member.memberId) ?? [];
       const memberLogs = allMemberLogs.filter((log) => log.logicalDate >= monday && log.logicalDate <= sunday);

@@ -9,6 +9,15 @@ env:
 
 on:
   workflow_dispatch:
+    inputs:
+      team_keys:
+        description: "Optional comma-separated team keys to sync, for example: team5 or team2,team3"
+        required: false
+        default: ""
+      skip_formatting:
+        description: "Skip weekly dashboard/history formatting for faster manual runs"
+        required: false
+        default: "false"
   schedule:
     - cron: "5 0 * * *"
     - cron: "5 15 * * *"
@@ -51,7 +60,8 @@ jobs:
           FORTUNE_LOG_LIMIT=${{ secrets.FORTUNE_LOG_LIMIT }}
           FORTUNE_LOG_CONCURRENCY=${{ secrets.FORTUNE_LOG_CONCURRENCY }}
           FORTUNE_LOOKBACK_DAYS=${{ secrets.FORTUNE_LOOKBACK_DAYS }}
-          FORTUNE_SKIP_FORMATTING=${{ secrets.FORTUNE_SKIP_FORMATTING }}
+          FORTUNE_SKIP_FORMATTING=${{ github.event_name == 'workflow_dispatch' && inputs.skip_formatting || secrets.FORTUNE_SKIP_FORMATTING }}
+          FORTUNE_SYNC_TEAM_KEYS=${{ github.event_name == 'workflow_dispatch' && inputs.team_keys || '' }}
           FORTUNE_WEB_APP_URL=${{ secrets.FORTUNE_WEB_APP_URL }}
           GOOGLE_CREDENTIALS_PATH=./credentials.json
           EOF
@@ -101,6 +111,10 @@ jobs:
 
           if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_BRIGADE2 }}' ]]; then
             printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_BRIGADE2 }}' > .auth/brigade2-storage-state.json
+          fi
+
+          if [[ -n '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_CAPTAIN_TINA }}' ]]; then
+            printf '%s' '${{ secrets.PLAYWRIGHT_STORAGE_STATE_JSON_CAPTAIN_TINA }}' > .auth/captain-tina-storage-state.json
           fi
 
       - name: Validate team storage states
@@ -186,6 +200,15 @@ jobs:
               echo "brigade2 storage state: OK"
             else
               echo "::error::Missing .auth/brigade2-storage-state.json. Check GitHub secret PLAYWRIGHT_STORAGE_STATE_JSON_BRIGADE2 and make sure it is saved under Repository secrets."
+              exit 1
+            fi
+          fi
+
+          if grep -q '"storage_state_path"[[:space:]]*:[[:space:]]*".auth/captain-tina-storage-state.json"' teams.local.json 2>/dev/null; then
+            if [[ -f .auth/captain-tina-storage-state.json ]]; then
+              echo "captain-tina storage state: OK"
+            else
+              echo "::error::Missing .auth/captain-tina-storage-state.json. Check GitHub secret PLAYWRIGHT_STORAGE_STATE_JSON_CAPTAIN_TINA."
               exit 1
             fi
           fi
