@@ -1037,7 +1037,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
       title: "傳愛",
       match: (questTitle) => questTitle === "傳愛",
       allTime: true,
-      displayPoints: true,
+      displayCount: true,
     },
   ];
 
@@ -1051,7 +1051,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
     ["主題親證週期", `${campaign.themeCycleLabel} ${campaign.themeCycleStart} ~ ${campaign.themeCycleEnd}`],
     [
       "說明",
-      "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，只認該輪指定主題親證，完成 1 次即打勾。實體小組定聚為 6 月、7 月各完成 1 次，總共 2 次即打勾。巔峰取經試煉、解圓夢計畫、親證班課後課、參加結業典禮為整個活動期間完成 1 次即打勾。傳愛顯示整個活動期間累計分數。",
+      "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，只認該輪指定主題親證，完成 1 次即打勾。實體小組定聚為 6 月、7 月各完成 1 次，總共 2 次即打勾。巔峰取經試煉、解圓夢計畫、親證班課後課、參加結業典禮為整個活動期間完成 1 次即打勾。傳愛顯示整個活動期間累計次數。",
     ],
     [],
     headerRow,
@@ -1085,11 +1085,10 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
                   (log.weeklyLogicalDate ?? log.logicalDate) <= task.rangeEnd,
               )
             : memberWeekLogs;
-        if (task.displayPoints) {
-          const matchedLogs = sourceLogs.filter((log) => task.match(log.questTitle));
-          return matchedLogs.length > 0 ? sumLogPoints(matchedLogs) : "";
-        }
         const matchCount = countTaskMatches(sourceLogs, task);
+        if (task.displayCount) {
+          return matchCount > 0 ? matchCount : "";
+        }
         if (matchCount >= task.requiredCount) {
           return "✓";
         }
