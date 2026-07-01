@@ -162,6 +162,13 @@ const CAMPAIGN_WEEKS = [
 ];
 
 const SPECIAL_EVENT_START = "2026-06-01";
+const FIFTH_WEEK_PROOF_REVIEW_GRACE = {
+  questTitle: "親證分享",
+  weekStart: "2026-06-22",
+  weekEnd: "2026-06-28",
+  graceStart: "2026-06-29",
+  graceEnd: "2026-07-01",
+};
 const DAILY_TASK_COLUMN_COUNT = 7;
 const SCORE_COLUMN_COUNT = 3;
 const WEEKLY_DASHBOARD_SCORE_COLUMN_COUNT = SCORE_COLUMN_COUNT + 1;
@@ -553,6 +560,51 @@ function themeProofCycleRange(cycleNumber) {
   };
 }
 
+function applyFifthWeekProofReviewGrace(rawLogs) {
+  const rule = FIFTH_WEEK_PROOF_REVIEW_GRACE;
+  const graceLogsByMember = new Map();
+
+  for (const log of rawLogs) {
+    if (
+      log.questTitle !== rule.questTitle ||
+      log.logicalDate < rule.graceStart ||
+      log.logicalDate > rule.graceEnd
+    ) {
+      continue;
+    }
+
+    // The normal Monday rollover may already have moved this record. Reset it
+    // first so only one delayed approval per member can be assigned to week 5.
+    log.weeklyLogicalDate = log.logicalDate;
+    if (!graceLogsByMember.has(log.memberId)) {
+      graceLogsByMember.set(log.memberId, []);
+    }
+    graceLogsByMember.get(log.memberId).push(log);
+  }
+
+  const membersWithFifthWeekProof = new Set(
+    rawLogs
+      .filter(
+        (log) =>
+          log.questTitle === rule.questTitle &&
+          log.weeklyLogicalDate >= rule.weekStart &&
+          log.weeklyLogicalDate <= rule.weekEnd,
+      )
+      .map((log) => log.memberId),
+  );
+
+  for (const [memberId, graceLogs] of graceLogsByMember) {
+    if (membersWithFifthWeekProof.has(memberId)) {
+      continue;
+    }
+    graceLogs.sort((a, b) => {
+      const timeCompare = String(a.loggedAt).localeCompare(String(b.loggedAt));
+      return timeCompare || String(a.logId).localeCompare(String(b.logId));
+    });
+    graceLogs[0].weeklyLogicalDate = rule.weekEnd;
+  }
+}
+
 function adjustWeeklyLogicalDates(rawLogs) {
   const shouldCountAsPreviousWeekOnMonday = (questTitle) =>
     questTitle === "親證分享" || questTitle.includes("主題親證");
@@ -578,6 +630,8 @@ function adjustWeeklyLogicalDates(rawLogs) {
       log.weeklyLogicalDate = previousDate;
     }
   }
+
+  applyFifthWeekProofReviewGrace(rawLogs);
 
   return rawLogs;
 }
