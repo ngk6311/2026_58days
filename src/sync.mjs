@@ -15,7 +15,13 @@ import {
 dns.setDefaultResultOrder("ipv4first");
 
 const API_FETCH_TIMEOUT_MS = 20000;
-const API_FETCH_MAX_ATTEMPTS = 4;
+const API_FETCH_MAX_ATTEMPTS = 6;
+const API_RETRY_BASE_DELAY_MS = 1000;
+const API_RETRY_MAX_DELAY_MS = 30000;
+const API_MIN_REQUEST_INTERVAL_MS = 200;
+
+let apiRetryNotBefore = 0;
+let apiNextRequestAt = 0;
 
 const SHEET_NAMES = [
   "task_rules",
@@ -238,10 +244,39 @@ function isRetriableFetchError(error) {
   return ["AbortError", "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ENETUNREACH"].includes(code);
 }
 
+function parseRetryAfterMs(response) {
+  const value = response.headers.get("retry-after");
+  if (!value) return 0;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+
+  const retryAt = Date.parse(value);
+  return Number.isFinite(retryAt) ? Math.max(0, retryAt - Date.now()) : 0;
+}
+
+function retryDelayMs(attempt, response = null) {
+  const exponentialDelay = Math.min(
+    API_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+    API_RETRY_MAX_DELAY_MS,
+  );
+  const serverDelay = response ? parseRetryAfterMs(response) : 0;
+  const jitter = Math.floor(Math.random() * Math.max(250, exponentialDelay * 0.5));
+  return Math.max(exponentialDelay, serverDelay) + jitter;
+}
+
+async function waitForApiCooldown() {
+  const requestAt = Math.max(Date.now(), apiRetryNotBefore, apiNextRequestAt);
+  apiNextRequestAt = requestAt + API_MIN_REQUEST_INTERVAL_MS;
+  const delayMs = requestAt - Date.now();
+  if (delayMs > 0) await sleep(delayMs);
+}
+
 async function fetchWithRetry(url, options = {}) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= API_FETCH_MAX_ATTEMPTS; attempt += 1) {
+    await waitForApiCooldown();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), API_FETCH_TIMEOUT_MS);
 
@@ -252,9 +287,14 @@ async function fetchWithRetry(url, options = {}) {
       }
 
       await response.arrayBuffer().catch(() => null);
-      const delayMs = 1000 * 2 ** (attempt - 1);
+      const delayMs = retryDelayMs(attempt, response);
+      if (response.status === 429) {
+        apiRetryNotBefore = Math.max(apiRetryNotBefore, Date.now() + delayMs);
+      }
       console.log(
-        `[FortuneAPI] ${response.status} on attempt ${attempt}/${API_FETCH_MAX_ATTEMPTS}, retrying in ${delayMs / 1000}s...`,
+        `[FortuneAPI] ${response.status} on attempt ${attempt}/${API_FETCH_MAX_ATTEMPTS}, retrying in ${(
+          delayMs / 1000
+        ).toFixed(1)}s...`,
       );
       await sleep(delayMs);
     } catch (error) {
@@ -263,10 +303,10 @@ async function fetchWithRetry(url, options = {}) {
         throw error;
       }
 
-      const delayMs = 1000 * 2 ** (attempt - 1);
+      const delayMs = retryDelayMs(attempt);
       console.log(
         `[FortuneAPI] fetch ${getFetchErrorCode(error)} on attempt ${attempt}/${API_FETCH_MAX_ATTEMPTS}, retrying in ${
-          delayMs / 1000
+          (delayMs / 1000).toFixed(1)
         }s...`,
       );
       await sleep(delayMs);

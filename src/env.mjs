@@ -117,7 +117,7 @@ function loadBaseConfig() {
     scoreResetHour: Number(getEnv("FORTUNE_SCORE_RESET_HOUR", "0")),
     weekStart: Number(getEnv("FORTUNE_WEEK_START", "1")),
     logLimit: getPositiveIntEnv("FORTUNE_LOG_LIMIT", 100),
-    logConcurrency: getPositiveIntEnv("FORTUNE_LOG_CONCURRENCY", 8),
+    logConcurrency: getPositiveIntEnv("FORTUNE_LOG_CONCURRENCY", 3),
     lookbackDays: getPositiveIntEnv("FORTUNE_LOOKBACK_DAYS", 28),
     skipFormatting: getBooleanEnv("FORTUNE_SKIP_FORMATTING", false),
     syncTeamKeys: getListEnv("FORTUNE_SYNC_TEAM_KEYS"),
