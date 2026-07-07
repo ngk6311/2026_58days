@@ -18,7 +18,7 @@ const API_FETCH_TIMEOUT_MS = 20000;
 const API_FETCH_MAX_ATTEMPTS = 6;
 const API_RETRY_BASE_DELAY_MS = 1000;
 const API_RETRY_MAX_DELAY_MS = 30000;
-const API_MIN_REQUEST_INTERVAL_MS = 200;
+const API_MIN_REQUEST_INTERVAL_MS = 500;
 
 let apiRetryNotBefore = 0;
 let apiNextRequestAt = 0;
@@ -244,6 +244,10 @@ function isRetriableFetchError(error) {
   return ["AbortError", "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ENETUNREACH"].includes(code);
 }
 
+function isExhaustedTransientError(error) {
+  return isRetriableFetchError(error) || /Request failed: (?:408|429|5\d\d)\b/.test(error?.message ?? "");
+}
+
 function parseRetryAfterMs(response) {
   const value = response.headers.get("retry-after");
   if (!value) return 0;
@@ -283,7 +287,15 @@ async function fetchWithRetry(url, options = {}) {
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       if (!isRetriableStatus(response.status) || attempt === API_FETCH_MAX_ATTEMPTS) {
-        return response;
+        // Keep body consumption inside the retry boundary. A server or proxy can
+        // reset the connection after sending headers, causing response.text() or
+        // response.json() to fail even though fetch() itself already resolved.
+        const bodyText = await response.text();
+        return new Response(bodyText, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
       }
 
       await response.arrayBuffer().catch(() => null);
@@ -690,6 +702,7 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
   const members = [];
   const rawLogs = [];
   const logIds = new Set();
+  const skippedLogMembers = [];
 
   const currentTeamId = teamData?.team?.id ?? null;
   const hasBrigadeAccess = brigadeData?.viewer_role === "brigade_captain";
@@ -767,7 +780,21 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
         team.isCurrentTeam || !useBrigadeMode
           ? `${apiBase}/my-team/members/${member.studentId}/score-logs?limit=${scoreLogLimit}`
           : `${apiBase}/my-brigade/teams/${team.teamId}/members/${member.studentId}/score-logs?limit=${scoreLogLimit}`;
-      const logs = await getJson(scoreLogUrl, authToken);
+      let logs;
+      try {
+        logs = await getJson(scoreLogUrl, authToken);
+      } catch (error) {
+        if (!isExhaustedTransientError(error)) {
+          throw error;
+        }
+        skippedLogMembers.push(member.memberName || member.studentId);
+        console.warn(
+          `[${teamConfig.teamKey}] Skipping score logs for ${member.memberName || member.studentId} after retries: ${
+            error.message
+          }`,
+        );
+        return [];
+      }
 
       return (logs ?? []).map((log) => {
         const logicalDate = log.logged_at
@@ -785,6 +812,10 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
         }
       }
     }
+  }
+
+  if (skippedLogMembers.length > 0) {
+    notes.push(`kept existing logs for ${skippedLogMembers.length} member(s) after transient API failures`);
   }
 
   if (teamConfig.extraSelfMembers?.length) {
