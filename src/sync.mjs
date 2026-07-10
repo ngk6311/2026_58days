@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import { chromium } from "playwright";
 import { loadConfig } from "./env.mjs";
 import { GoogleSheetsClient } from "./google-sheets.mjs";
 import {
@@ -22,6 +23,7 @@ const API_MIN_REQUEST_INTERVAL_MS = 500;
 
 let apiRetryNotBefore = 0;
 let apiNextRequestAt = 0;
+let activeFortuneApiPage = null;
 
 const SHEET_NAMES = [
   "task_rules",
@@ -276,6 +278,105 @@ async function waitForApiCooldown() {
   if (delayMs > 0) await sleep(delayMs);
 }
 
+function browserFetchResultToResponse(result) {
+  const headers = result.headers ?? {};
+  return {
+    ok: result.ok,
+    status: result.status,
+    statusText: result.statusText,
+    headers: {
+      get(name) {
+        return headers[String(name).toLowerCase()] ?? null;
+      },
+    },
+    async text() {
+      return result.text ?? "";
+    },
+  };
+}
+
+async function fetchWithBrowserPageRetry(url) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= API_FETCH_MAX_ATTEMPTS; attempt += 1) {
+    await waitForApiCooldown();
+
+    try {
+      const result = await activeFortuneApiPage.evaluate(
+        async ({ requestUrl, timeoutMs }) => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), timeoutMs);
+          try {
+            const accessToken = localStorage.getItem("accessToken");
+            const headers = {
+              Accept: "application/json, text/plain, */*",
+              ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+            };
+            const response = await fetch(requestUrl, {
+              method: "GET",
+              headers,
+              signal: controller.signal,
+            });
+            const responseHeaders = {};
+            response.headers.forEach((value, key) => {
+              responseHeaders[key.toLowerCase()] = value;
+            });
+            const text = await response.text();
+            return {
+              ok: response.ok,
+              status: response.status,
+              statusText: response.statusText,
+              headers: responseHeaders,
+              text,
+            };
+          } finally {
+            clearTimeout(timeout);
+          }
+        },
+        { requestUrl: url, timeoutMs: API_FETCH_TIMEOUT_MS },
+      );
+      const response = browserFetchResultToResponse(result);
+
+      if (!isRetriableStatus(response.status) || attempt === API_FETCH_MAX_ATTEMPTS) {
+        return response;
+      }
+
+      const delayMs = retryDelayMs(attempt, response);
+      if (response.status === 429) {
+        apiRetryNotBefore = Math.max(apiRetryNotBefore, Date.now() + delayMs);
+      }
+      console.log(
+        `[FortuneAPI/browser] ${response.status} on attempt ${attempt}/${API_FETCH_MAX_ATTEMPTS}, retrying in ${(
+          delayMs / 1000
+        ).toFixed(1)}s...`,
+      );
+      await sleep(delayMs);
+    } catch (error) {
+      lastError = error;
+      if (!isRetriableFetchError(error) || attempt === API_FETCH_MAX_ATTEMPTS) {
+        throw error;
+      }
+
+      const delayMs = retryDelayMs(attempt);
+      console.log(
+        `[FortuneAPI/browser] fetch ${getFetchErrorCode(error)} on attempt ${attempt}/${API_FETCH_MAX_ATTEMPTS}, retrying in ${
+          (delayMs / 1000).toFixed(1)
+        }s...`,
+      );
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError;
+}
+
+async function fetchFortuneApi(url, options = {}) {
+  if (activeFortuneApiPage) {
+    return fetchWithBrowserPageRetry(url);
+  }
+  return fetchWithRetry(url, options);
+}
+
 async function fetchWithRetry(url, options = {}) {
   let lastError = null;
 
@@ -337,7 +438,7 @@ async function resolveSchoolId(teamConfig, authToken) {
   }
 
   const url = `${teamConfig.apiBaseUrl}/api/v1/public/schoolsInfo/${schoolSlug}`;
-  const response = await fetchWithRetry(url, {
+  const response = await fetchFortuneApi(url, {
     headers: {
       Accept: "application/json, text/plain, */*",
       Authorization: `Bearer ${authToken}`,
@@ -357,7 +458,7 @@ async function resolveSchoolId(teamConfig, authToken) {
 }
 
 async function getJson(url, authToken) {
-  const response = await fetchWithRetry(url, {
+  const response = await fetchFortuneApi(url, {
     method: "GET",
     headers: {
       Accept: "application/json, text/plain, */*",
@@ -380,7 +481,7 @@ async function getJson(url, authToken) {
 }
 
 async function getJsonOptional(url, authToken, allowedStatuses = [401, 403, 404]) {
-  const response = await fetchWithRetry(url, {
+  const response = await fetchFortuneApi(url, {
     method: "GET",
     headers: {
       Accept: "application/json, text/plain, */*",
@@ -476,6 +577,62 @@ function normalizeMember(team, member) {
     weeklyScore: Number(member.weekly_score ?? 0),
     totalScore: Number(member.total_score ?? 0),
   };
+}
+
+function fallbackMemberId(teamConfig, memberName) {
+  return `browser:${teamConfig.teamKey}:${memberName}`;
+}
+
+function memberFromSheetRow(row) {
+  if (!row?.[4]) {
+    return null;
+  }
+
+  return {
+    teamId: row[0] ?? "",
+    teamName: row[1] ?? "",
+    memberId: row[2] ?? "",
+    studentId: row[3] ?? "",
+    memberName: row[4] ?? "",
+    identityName: row[5] ?? "",
+    isTeamCaptain: String(row[6] ?? "").toUpperCase() === "TRUE",
+    isBrigadeCaptain: String(row[7] ?? "").toUpperCase() === "TRUE",
+    todayScore: Number(row[8] ?? 0),
+    weeklyScore: Number(row[9] ?? 0),
+    totalScore: Number(row[10] ?? 0),
+  };
+}
+
+function enrichMembersFromExistingRows(members, existingMemberRows, teamConfig) {
+  const existingByName = new Map();
+  for (const row of existingMemberRows.slice(1)) {
+    const member = memberFromSheetRow(row);
+    if (member?.memberName) {
+      existingByName.set(member.memberName, member);
+    }
+  }
+
+  return members.map((member) => {
+    const existing = existingByName.get(member.memberName);
+    if (!existing) {
+      return {
+        ...member,
+        memberId: member.memberId || fallbackMemberId(teamConfig, member.memberName),
+      };
+    }
+
+    return {
+      ...member,
+      teamId: member.teamId || existing.teamId,
+      teamName: member.teamName || existing.teamName,
+      memberId: member.memberId.startsWith("browser:") ? existing.memberId || member.memberId : member.memberId,
+      studentId: member.studentId || existing.studentId,
+      identityName: member.identityName || existing.identityName,
+      isTeamCaptain: member.isTeamCaptain || existing.isTeamCaptain,
+      isBrigadeCaptain: member.isBrigadeCaptain || existing.isBrigadeCaptain,
+      weeklyScore: member.weeklyScore || existing.weeklyScore,
+    };
+  });
 }
 
 function compareMembersForDisplay(a, b, { groupByTeam = true } = {}) {
@@ -588,6 +745,109 @@ async function collectExtraSelfMembersAndLogs(teamConfig, appConfig, schoolId, s
   return { members, rawLogs, notes };
 }
 
+async function collectMembersFromPartnersPage(teamConfig, storageStatePath) {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ storageState: storageStatePath });
+    const page = await context.newPage();
+    await page.goto(teamConfig.partnersUrl, { waitUntil: "networkidle", timeout: 60000 });
+
+    if (teamConfig.roleType === "brigade") {
+      const brigadeButton = page.getByRole("button", { name: /我的大隊/ });
+      if ((await brigadeButton.count()) > 0) {
+        await brigadeButton.first().click();
+        await page.waitForTimeout(1500);
+      }
+    }
+
+    const scraped = await page.evaluate(
+      ({ teamKey, defaultTeamName }) => {
+        const normalizeNumber = (value) => Number(String(value ?? "").replace(/[^\d.-]/g, "")) || 0;
+        const textLines = document.body.innerText
+          .split(/\n+/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+        const teamName =
+          textLines.find((line, index) => line && textLines[index + 1] === "有奇蹟也要有累積") ||
+          defaultTeamName;
+
+        const cards = [...document.querySelectorAll("div")]
+          .filter((element) => {
+            const text = element.innerText || "";
+            const className = String(element.className || "");
+            return (
+              className.includes("p-3") &&
+              className.includes("rounded-xl") &&
+              className.includes("border") &&
+              /今日\s*[+-]?\d+/.test(text) &&
+              /\n/.test(text)
+            );
+          })
+          .map((element) =>
+            element.innerText
+              .split(/\n+/)
+              .map((line) => line.trim())
+              .filter(Boolean),
+          );
+
+        const members = [];
+        const seenNames = new Set();
+        for (const lines of cards) {
+          const [, memberName, identityName, totalScoreText, todayScoreText] = lines;
+          if (!memberName || !identityName || !totalScoreText || !todayScoreText) {
+            continue;
+          }
+          if (identityName.includes("大隊長") || seenNames.has(memberName)) {
+            continue;
+          }
+          seenNames.add(memberName);
+          members.push({
+            teamId: "",
+            teamName,
+            memberId: `browser:${teamKey}:${memberName}`,
+            studentId: "",
+            memberName,
+            identityName,
+            isTeamCaptain: identityName.includes("隊長"),
+            isBrigadeCaptain: false,
+            todayScore: normalizeNumber(todayScoreText),
+            weeklyScore: 0,
+            totalScore: normalizeNumber(totalScoreText),
+          });
+        }
+
+        return { members };
+      },
+      { teamKey: teamConfig.teamKey, defaultTeamName: teamConfig.teamName },
+    );
+
+    await context.close();
+    return scraped.members;
+  } finally {
+    await browser.close();
+  }
+}
+
+async function openFortuneApiBrowserPage(teamConfig, storageStatePath) {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ storageState: storageStatePath });
+  const page = await context.newPage();
+  try {
+    await page.goto(teamConfig.partnersUrl, { waitUntil: "networkidle", timeout: 60000 });
+    return {
+      page,
+      async close() {
+        await context.close();
+        await browser.close();
+      },
+    };
+  } catch (error) {
+    await context.close().catch(() => null);
+    await browser.close().catch(() => null);
+    throw error;
+  }
+}
+
 function isMondayDateKey(dateKey) {
   if (!dateKey) {
     return false;
@@ -688,12 +948,12 @@ function adjustWeeklyLogicalDates(rawLogs) {
   return rawLogs;
 }
 
-async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken) {
+async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken, storageStatePath) {
   const apiBase = `${teamConfig.apiBaseUrl}/api/v1/schools/${schoolId}/fortune_game`;
   const expectsBrigadeRole = teamConfig.roleType === "brigade";
   const [teamData, publicConfig] = await Promise.all([
     getJsonOptional(`${apiBase}/my-team/members`, authToken, [401, 403, 404, 409]),
-    getJson(`${apiBase}/config/public`, authToken),
+    getJsonOptional(`${apiBase}/config/public`, authToken),
   ]);
   const brigadeData = await getJsonOptional(`${apiBase}/my-brigade`, authToken);
 
@@ -708,11 +968,13 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
   const hasBrigadeAccess = brigadeData?.viewer_role === "brigade_captain";
   const useBrigadeMode = expectsBrigadeRole || hasBrigadeAccess;
 
-  if (expectsBrigadeRole && !brigadeData) {
-    throw new Error(`Expected brigade access for ${teamConfig.teamKey}, but /my-brigade is unavailable.`);
-  }
-
   const notes = [useBrigadeMode ? "brigade captain" : "team leader/member"];
+  if (expectsBrigadeRole && !brigadeData) {
+    notes.push("brigade API unavailable; using browser fallback");
+  }
+  if (!publicConfig) {
+    notes.push("used configured score reset hour");
+  }
 
   const teamsToSync = [];
   const addTeamToSync = (team) => {
@@ -819,21 +1081,33 @@ async function collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken)
   }
 
   if (teamConfig.extraSelfMembers?.length) {
-    const extraCollected = await collectExtraSelfMembersAndLogs(
-      teamConfig,
-      appConfig,
-      schoolId,
-      scoreResetHour,
-      fetchedAt,
-    );
-    members.push(...extraCollected.members);
-    notes.push(...extraCollected.notes);
+    try {
+      const extraCollected = await collectExtraSelfMembersAndLogs(
+        teamConfig,
+        appConfig,
+        schoolId,
+        scoreResetHour,
+        fetchedAt,
+      );
+      members.push(...extraCollected.members);
+      notes.push(...extraCollected.notes);
 
-    for (const row of extraCollected.rawLogs) {
-      if (!logIds.has(row.logId)) {
-        logIds.add(row.logId);
-        rawLogs.push(row);
+      for (const row of extraCollected.rawLogs) {
+        if (!logIds.has(row.logId)) {
+          logIds.add(row.logId);
+          rawLogs.push(row);
+        }
       }
+    } catch (error) {
+      notes.push(`skipped extra self members after API failure: ${error.message}`);
+    }
+  }
+
+  if (members.length === 0) {
+    const browserMembers = await collectMembersFromPartnersPage(teamConfig, storageStatePath);
+    members.push(...browserMembers);
+    if (browserMembers.length > 0) {
+      notes.push(`browser fallback current scores for ${browserMembers.length} member(s)`);
     }
   }
 
@@ -1071,6 +1345,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
   const isBrigadeView = teamConfig.roleType === "brigade";
   const scoreMode = options.scoreMode ?? "current";
   const leaderboardRanks = options.leaderboardRanks ?? { byId: new Map(), byName: new Map() };
+  const syncedAt = options.syncedAt ?? "";
   const includeLeaderboardRank = scoreMode !== "history";
   const headerRow =
     scoreMode === "history"
@@ -1173,7 +1448,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
       "手機同步",
       teamConfig.webAppUrl ? `=HYPERLINK("${teamConfig.webAppUrl}","手機點我同步")` : "",
     ],
-    ["主題親證週期", `${campaign.themeCycleLabel} ${campaign.themeCycleStart} ~ ${campaign.themeCycleEnd}`],
+    ["主題親證週期", `${campaign.themeCycleLabel} ${campaign.themeCycleStart} ~ ${campaign.themeCycleEnd}`, "更新時間", syncedAt],
     [
       "說明",
       "週一到週日欄位顯示當日每日任務完成數；3項以上打勾，未滿3項顯示完成數字。主題親證採兩週一輪，只認該輪指定主題親證，完成 1 次即打勾。實體小組定聚為 6 月、7 月各完成 1 次，總共 2 次即打勾。巔峰取經試煉、解圓夢計畫、親證班課後課、參加結業典禮為整個活動期間完成 1 次即打勾。傳愛顯示整個活動期間累計次數。",
@@ -1243,7 +1518,10 @@ function buildWeeklyDashboard(teamConfig, appConfig, members, rawLogs, scoreRese
     members,
     rawLogs,
     getCampaignWeekInfo(appConfig, scoreResetHour),
-    { leaderboardRanks },
+    {
+      leaderboardRanks,
+      syncedAt: formatDateTime(new Date(), appConfig.timezone),
+    },
   );
 }
 
@@ -1958,9 +2236,23 @@ async function syncTeam(appConfig, teamConfig, leaderboardCache) {
   console.log(`[${teamConfig.teamKey}] Starting sync...`);
   const storageStatePath = requireStorageState(teamConfig.storageStatePath);
   const authToken = readAccessTokenFromStorageState(storageStatePath);
+  const browserSession = await openFortuneApiBrowserPage(teamConfig, storageStatePath);
+  const previousFortuneApiPage = activeFortuneApiPage;
+  activeFortuneApiPage = browserSession.page;
+
+  try {
   const schoolId = teamConfig.schoolId || (await resolveSchoolId(teamConfig, authToken));
   console.log(`[${teamConfig.teamKey}] Collecting members and logs...`);
-  const collected = await collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken);
+  const collected = await collectMembersAndLogs(teamConfig, appConfig, schoolId, authToken, storageStatePath);
+
+  const sheetsClient = new GoogleSheetsClient({
+    ...appConfig.google,
+    spreadsheetId: teamConfig.sheetId,
+  });
+  await sheetsClient.ensureSheets(SHEET_NAMES);
+  const existingMemberRows = await sheetsClient.getValues("members!A:K");
+  collected.members = enrichMembersFromExistingRows(collected.members, existingMemberRows, teamConfig);
+
   if (collected.members.length === 0) {
     throw new Error(`[${teamConfig.teamKey}] Refusing to overwrite Google Sheets with 0 members. Refresh auth first.`);
   }
@@ -1975,11 +2267,6 @@ async function syncTeam(appConfig, teamConfig, leaderboardCache) {
     console.warn(`[${teamConfig.teamKey}] Could not load individual leaderboard ranks: ${error.message}`);
   }
 
-  const sheetsClient = new GoogleSheetsClient({
-    ...appConfig.google,
-    spreadsheetId: teamConfig.sheetId,
-  });
-  await sheetsClient.ensureSheets(SHEET_NAMES);
   const existingRawLogRows = await sheetsClient.getValues("raw_logs!A:L");
   const mergedRawLogs = mergeRawLogs(existingRawLogRows, collected.rawLogs);
   console.log(
@@ -2027,6 +2314,10 @@ async function syncTeam(appConfig, teamConfig, leaderboardCache) {
   });
 
   console.log(`[${teamConfig.teamKey}] Synced ${collected.members.length} members and ${collected.rawLogs.length} logs.`);
+  } finally {
+    activeFortuneApiPage = previousFortuneApiPage;
+    await browserSession.close();
+  }
 }
 
 async function main() {

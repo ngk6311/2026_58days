@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { chromium } from "playwright";
 import { loadConfig } from "./env.mjs";
 import { GoogleSheetsClient } from "./google-sheets.mjs";
 import { formatDateTime } from "./time.mjs";
@@ -39,19 +40,30 @@ function readAccessTokenFromStorageState(storageStatePath) {
   throw new Error(`Missing accessToken in ${storageStatePath}. Please run auth again.`);
 }
 
-async function getLeaderboard(apiBase, authToken, type) {
-  const response = await fetch(`${apiBase}/leaderboard?type=${type}&limit=${LEADERBOARD_LIMIT}`, {
-    headers: {
-      Accept: "application/json, text/plain, */*",
-      Authorization: `Bearer ${authToken}`,
-    },
-  });
+async function getLeaderboard(page, apiBase, type) {
+  const url = `${apiBase}/leaderboard?type=${type}&limit=${LEADERBOARD_LIMIT}`;
+  const result = await page.evaluate(async (requestUrl) => {
+    const accessToken = localStorage.getItem("accessToken");
+    const response = await fetch(requestUrl, {
+      headers: {
+        Accept: "application/json, text/plain, */*",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+    });
+    const text = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      text,
+    };
+  }, url);
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${type} leaderboard: ${response.status} ${response.statusText}`);
+  if (!result.ok) {
+    throw new Error(`Failed to fetch ${type} leaderboard: ${result.status} ${result.statusText}. ${result.text}`);
   }
 
-  return response.json();
+  return JSON.parse(result.text);
 }
 
 function achievementNames(titles) {
@@ -176,13 +188,23 @@ async function main() {
     throw new Error("No enabled team config available for lobby leaderboard auth.");
   }
 
-  const authToken = readAccessTokenFromStorageState(requireStorageState(sourceTeam.storageStatePath));
+  const storageStatePath = requireStorageState(sourceTeam.storageStatePath);
+  readAccessTokenFromStorageState(storageStatePath);
   const apiBase = `${sourceTeam.apiBaseUrl}/api/v1/schools/${sourceTeam.schoolId}/fortune_game`;
   const syncedAt = formatDateTime(new Date(), appConfig.timezone);
   const leaderboards = {};
 
-  for (const type of LEADERBOARD_TYPES) {
-    leaderboards[type] = await getLeaderboard(apiBase, authToken, type);
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ storageState: storageStatePath });
+  const page = await context.newPage();
+  try {
+    await page.goto(sourceTeam.partnersUrl, { waitUntil: "networkidle", timeout: 60000 });
+    for (const type of LEADERBOARD_TYPES) {
+      leaderboards[type] = await getLeaderboard(page, apiBase, type);
+    }
+  } finally {
+    await context.close();
+    await browser.close();
   }
 
   const sheets = buildLeaderboardSheets(leaderboards, syncedAt);
