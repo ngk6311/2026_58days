@@ -180,6 +180,7 @@ def cmd_sync() -> None:
     _, npm_path = ensure_dependencies()
     if not ENV_PATH.exists():
         raise SystemExit("找不到 .env，請先執行：python run.py init")
+    ensure_playwright_browser(npm_path)
     run_command([npm_path, "run", "sync"])
 
 
