@@ -1873,6 +1873,7 @@ async function applyWeeklyDashboardFormatting(sheetsClient, rows) {
   const memberColumnCount = hasBrigadeColumn ? 2 : 1;
   const scoreStartColumnIndex = memberColumnCount;
   const scoreEndColumnIndex = Math.min(scoreStartColumnIndex + WEEKLY_DASHBOARD_SCORE_COLUMN_COUNT, colCount);
+  const rankColumnIndex = scoreStartColumnIndex + SCORE_COLUMN_COUNT;
   const dailyStartColumnIndex = scoreEndColumnIndex;
   const dailyEndColumnIndex = Math.min(dailyStartColumnIndex + DAILY_TASK_COLUMN_COUNT, colCount);
   const legacyWeeklyStartColumnIndex = dailyEndColumnIndex;
@@ -1996,6 +1997,21 @@ async function applyWeeklyDashboardFormatting(sheetsClient, rows) {
         },
         properties: { pixelSize: 76 },
         fields: "pixelSize",
+      },
+    });
+  }
+
+  if (rankColumnIndex < colCount) {
+    requests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: rankColumnIndex,
+          endIndex: rankColumnIndex + 1,
+        },
+        properties: { hiddenByUser: true },
+        fields: "hiddenByUser",
       },
     });
   }
