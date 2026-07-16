@@ -9,9 +9,6 @@ env:
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "15 0 * * *"
-    - cron: "15 15 * * *"
 
 jobs:
   sync-lobby:
@@ -32,7 +29,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browser
-        run: npx playwright install chromium
+        run: npx playwright install --with-deps
 
       - name: Write runtime secrets
         shell: bash

@@ -18,9 +18,6 @@ on:
         description: "Skip weekly dashboard/history formatting for faster manual runs"
         required: false
         default: "false"
-  schedule:
-    - cron: "5 0 * * *"
-    - cron: "5 15 * * *"
 
 jobs:
   sync:
@@ -46,7 +43,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browser
-        run: npx playwright install chromium
+        run: npx playwright install --with-deps
 
       - name: Write runtime secrets
         shell: bash
