@@ -177,6 +177,12 @@ const FIFTH_WEEK_PROOF_REVIEW_GRACE = {
   graceStart: "2026-06-29",
   graceEnd: "2026-07-01",
 };
+const SEVENTH_WEEK_PROOF_REVIEW_GRACE = {
+  questTitle: "親證分享",
+  weekEnd: "2026-07-12",
+  graceStart: "2026-07-13",
+  graceEnd: "2026-07-17",
+};
 const DAILY_TASK_COLUMN_COUNT = 7;
 const SCORE_COLUMN_COUNT = 3;
 const WEEKLY_DASHBOARD_SCORE_COLUMN_COUNT = SCORE_COLUMN_COUNT + 1;
@@ -917,6 +923,21 @@ function applyFifthWeekProofReviewGrace(rawLogs) {
   }
 }
 
+function applySeventhWeekProofReviewGrace(rawLogs) {
+  const rule = SEVENTH_WEEK_PROOF_REVIEW_GRACE;
+
+  for (const log of rawLogs) {
+    if (
+      log.questTitle === rule.questTitle &&
+      log.sourceType === "quest_approved" &&
+      log.logicalDate >= rule.graceStart &&
+      log.logicalDate <= rule.graceEnd
+    ) {
+      log.weeklyLogicalDate = rule.weekEnd;
+    }
+  }
+}
+
 function adjustWeeklyLogicalDates(rawLogs) {
   const shouldCountAsPreviousWeekOnMonday = (questTitle) =>
     questTitle === "親證分享" || questTitle.includes("主題親證");
@@ -944,6 +965,7 @@ function adjustWeeklyLogicalDates(rawLogs) {
   }
 
   applyFifthWeekProofReviewGrace(rawLogs);
+  applySeventhWeekProofReviewGrace(rawLogs);
 
   return rawLogs;
 }
