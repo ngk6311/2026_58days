@@ -1370,7 +1370,7 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
   const syncedAt = options.syncedAt ?? "";
   const includeLeaderboardRank = scoreMode !== "history";
   const proofSharingQuestTitle =
-    campaign.currentWeekLabel === "第9週" ? "取經圓滿：我的覺察與願行" : "親證分享";
+    campaign.currentWeekLabel === "第9週" ? "《取經圓滿：我的覺察與願行》" : "親證分享";
   const baseHeaderRow =
     scoreMode === "history"
       ? isBrigadeView
