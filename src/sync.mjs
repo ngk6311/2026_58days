@@ -1369,7 +1369,9 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
   const leaderboardRanks = options.leaderboardRanks ?? { byId: new Map(), byName: new Map() };
   const syncedAt = options.syncedAt ?? "";
   const includeLeaderboardRank = scoreMode !== "history";
-  const headerRow =
+  const proofSharingQuestTitle =
+    campaign.currentWeekLabel === "第9週" ? "取經圓滿：我的覺察與願行" : "親證分享";
+  const baseHeaderRow =
     scoreMode === "history"
       ? isBrigadeView
         ? BRIGADE_WEEKLY_HISTORY_DASHBOARD_HEADERS
@@ -1377,6 +1379,9 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
       : isBrigadeView
         ? BRIGADE_WEEKLY_DASHBOARD_HEADERS
         : WEEKLY_DASHBOARD_HEADERS;
+  const headerRow = baseHeaderRow.map((header) =>
+    header === "親證分享 (1次)" ? `${proofSharingQuestTitle} (1次)` : header,
+  );
   const weekDates = campaign.weekDates;
   const monday = campaign.currentWeekStart;
   const sunday = campaign.currentWeekEnd;
@@ -1415,7 +1420,11 @@ function buildWeeklyDashboardForCampaign(teamConfig, members, rawLogs, campaign,
     },
     { title: "天使通話 (1次)", requiredCount: 1, match: (questTitle) => questTitle === "天使通話" },
     { title: "蓋婭的召喚 (1次)", requiredCount: 1, match: (questTitle) => questTitle === "蓋婭的召喚" },
-    { title: "親證分享 (1次)", requiredCount: 1, match: (questTitle) => questTitle === "親證分享" },
+    {
+      title: `${proofSharingQuestTitle} (1次)`,
+      requiredCount: 1,
+      match: (questTitle) => questTitle === proofSharingQuestTitle,
+    },
     {
       title: "參加心成活動 (2次)",
       requiredCount: 2,
